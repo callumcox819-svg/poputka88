@@ -277,9 +277,8 @@ async def cb_mail_reply_mode(callback: CallbackQuery, state: FSMContext) -> None
 @router.callback_query(F.data.startswith("mail_reply_html:"))
 async def cb_mail_reply_html(callback: CallbackQuery, settings: Settings, state: FSMContext) -> None:
     try:
-        parts = (callback.data or "").split(":")
-        kind = parts[2]
-        mail_id = int(parts[3])
+        _, kind, mail_id_s = (callback.data or "").split(":", 2)
+        mail_id = int(mail_id_s)
     except Exception:
         return await callback.answer("Неверные данные", show_alert=True)
 
