@@ -19,18 +19,87 @@ DB_PATH = Path(__file__).resolve().parent.parent / "data" / "bot.db"
 _pool = None
 
 
-def _database_url() -> str:
-    url = (os.getenv("DATABASE_URL") or "").strip()
-    if not url:
-        try:
-            import config as _cfg
+def _normalize_pg_url(url: str) -> str:
+    u = (url or "").strip()
+    if u.startswith("postgres://"):
+        u = "postgresql://" + u[len("postgres://") :]
+    return u
 
-            url = (getattr(_cfg, "DATABASE_URL", None) or "").strip()
-        except Exception:
-            pass
-    if url.startswith("postgres://"):
-        url = "postgresql://" + url[len("postgres://") :]
-    return url
+
+def _looks_like_unexpanded_reference(url: str) -> bool:
+    u = (url or "").strip()
+    return "${" in u or "{{" in u
+
+
+def _build_url_from_pg_env() -> str:
+    """Railway Postgres иногда даёт PGHOST/PGUSER без DATABASE_URL на сервисе."""
+    host = (
+        (os.getenv("PGHOST") or os.getenv("POSTGRES_HOST") or "").strip()
+        or (os.getenv("RAILWAY_TCP_PROXY_DOMAIN") or "").strip()
+    )
+    user = (os.getenv("PGUSER") or os.getenv("POSTGRES_USER") or "postgres").strip()
+    password = (os.getenv("PGPASSWORD") or os.getenv("POSTGRES_PASSWORD") or "").strip()
+    database = (
+        (os.getenv("PGDATABASE") or os.getenv("POSTGRES_DB") or "railway").strip()
+    )
+    port = (os.getenv("PGPORT") or os.getenv("POSTGRES_PORT") or "5432").strip()
+    if not host or not password:
+        return ""
+    from urllib.parse import quote_plus
+
+    return _normalize_pg_url(
+        f"postgresql://{quote_plus(user)}:{quote_plus(password)}@{host}:{port}/{database}"
+    )
+
+
+def _database_url() -> str:
+    for key in (
+        "DATABASE_URL",
+        "DATABASE_PRIVATE_URL",
+        "DATABASE_PUBLIC_URL",
+        "POSTGRES_URL",
+        "POSTGRESQL_URL",
+    ):
+        raw = (os.getenv(key) or "").strip()
+        if raw and not _looks_like_unexpanded_reference(raw):
+            return _normalize_pg_url(raw)
+
+    try:
+        import config as _cfg
+        from config import _pick
+
+        picked = _pick(getattr(_cfg, "DATABASE_URL", ""), "DATABASE_URL")
+        if picked and not _looks_like_unexpanded_reference(picked):
+            return _normalize_pg_url(picked)
+    except Exception:
+        pass
+
+    built = _build_url_from_pg_env()
+    if built:
+        return built
+    return ""
+
+
+def database_env_diag() -> str:
+    """Для логов: какие ключи заданы (без значений)."""
+    names = (
+        "DATABASE_URL",
+        "DATABASE_PRIVATE_URL",
+        "PGHOST",
+        "PGUSER",
+        "PGPASSWORD",
+        "PGDATABASE",
+    )
+    found = []
+    for n in names:
+        v = (os.getenv(n) or "").strip()
+        if not v:
+            continue
+        if _looks_like_unexpanded_reference(v):
+            found.append(f"{n}=<шаблон не раскрыт>")
+        else:
+            found.append(f"{n}=<set>")
+    return ", ".join(found) if found else "(нет PG/DATABASE переменных в процессе)"
 
 
 def is_postgres() -> bool:

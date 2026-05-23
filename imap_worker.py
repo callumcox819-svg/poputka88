@@ -22,7 +22,7 @@ from aiogram.enums import ParseMode
 from config import load_settings
 from database import count_imap_poll_accounts_raw, init_db, list_imap_poll_accounts
 from services.bot_users import seed_config_admins
-from services.db_backend import DB_PATH, is_postgres
+from services.db_backend import DB_PATH, database_env_diag, is_postgres
 from services.incoming_worker import POLL_SEC, start_incoming_mail_worker
 
 logger = logging.getLogger(__name__)
@@ -72,10 +72,12 @@ async def main() -> None:
 
     if not is_postgres():
         logger.critical(
-            "DATABASE_URL не задан — воркер использует пустой SQLite (%s). "
-            "На Railway: imap-worker → Variables → DATABASE_URL = Reference → "
-            "тот же Postgres, что у poputka88 (не копировать URL вручную с опечаткой).",
+            "PostgreSQL не виден в процессе (%s). Переменные в контейнере: %s. "
+            "Откройте Variables именно у сервиса imap-worker (inspiring-beauty), "
+            "добавьте DATABASE_URL → Reference → Postgres (как у poputka88), "
+            "нажмите Deploy. Не вставляйте ${{Postgres...}} текстом — только Reference.",
             DB_PATH,
+            database_env_diag(),
         )
         sys.exit(1)
 
