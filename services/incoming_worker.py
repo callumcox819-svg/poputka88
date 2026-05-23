@@ -19,9 +19,11 @@ from database import (
     set_imap_last_uid,
     set_incoming_mail_tg_message,
 )
+from services.imap_accounts import imap_mailbox_for_account, is_gmail_account
 from services.imap_fetch import (
     fetch_new_mails_sync,
     is_google_system_mail,
+    is_own_outgoing_copy,
     service_label_from_body,
     service_label_from_link,
 )
@@ -148,6 +150,11 @@ async def _process_account(
     if not host or not email_addr or not password:
         return 0
 
+    mailbox = imap_mailbox_for_account(acc)
+    recent = catch_up_recent
+    if recent <= 0 and is_gmail_account(acc):
+        recent = 25
+
     last_uid = await get_imap_last_uid(acc_id)
     try:
         mails, new_last = await asyncio.to_thread(
@@ -157,7 +164,8 @@ async def _process_account(
             email_addr=email_addr,
             password=password,
             last_uid=last_uid,
-            catch_up_recent=catch_up_recent,
+            catch_up_recent=recent,
+            mailbox=mailbox,
         )
     except Exception as exc:
         logger.error("IMAP acc_id=%s %s: %s", acc_id, email_addr, exc)
@@ -175,11 +183,15 @@ async def _process_account(
     skipped_exists = 0
     skipped_system = 0
     skipped_empty = 0
+    skipped_own = 0
 
     for row in mails:
         uid, from_email, from_name, subject, _date, body, message_id = row
         if not from_email:
             skipped_empty += 1
+            continue
+        if is_own_outgoing_copy(from_email, email_addr, subject):
+            skipped_own += 1
             continue
         if is_google_system_mail(from_email, from_name, subject):
             skipped_system += 1
@@ -235,10 +247,13 @@ async def _process_account(
 
     if mails and not notified:
         logger.info(
-            "IMAP acc=%s fetched=%s notified=0 (exists=%s system=%s empty=%s)",
+            "IMAP acc=%s [%s] fetched=%s notified=0 "
+            "(exists=%s own=%s system=%s empty=%s)",
             email_addr,
+            mailbox,
             len(mails),
             skipped_exists,
+            skipped_own,
             skipped_system,
             skipped_empty,
         )

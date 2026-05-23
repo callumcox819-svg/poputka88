@@ -1,15 +1,19 @@
-"""IMAP INBOX: новые UID + догон UNSEEN / недавних (чтобы не терять ответы продавцов)."""
+"""IMAP: входящие на ящик бота (INBOX или Gmail All Mail) + догон UNSEEN."""
 
 from __future__ import annotations
 
 import email
 import imaplib
+import logging
 import re
 from email.header import decode_header
 from email.utils import parseaddr
 
+logger = logging.getLogger(__name__)
+
 DEFAULT_MAX_PER_ACCOUNT = 15
 CATCH_UP_RECENT_UIDS = 40
+GMAIL_ALL_MAIL = "[Gmail]/All Mail"
 
 # uid, from_email, from_name, subject, date, body, message_id
 MailRow = tuple[str, str, str, str, str, str, str]
@@ -54,16 +58,29 @@ def _extract_text_from_msg(msg: email.message.Message) -> str:
         return payload.decode("utf-8", errors="ignore").strip()
 
 
-def _imap_connect(host: str, port: int, email_addr: str, password: str) -> imaplib.IMAP4:
+def _select_mailbox_with_fallback(
+    host: str,
+    port: int,
+    email_addr: str,
+    password: str,
+    mailbox: str,
+) -> tuple[imaplib.IMAP4, str]:
+    """Gmail All Mail → при ошибке INBOX."""
     if int(port) == 993:
         m = imaplib.IMAP4_SSL(host, int(port), timeout=45)
     else:
         m = imaplib.IMAP4(host, int(port), timeout=45)
     m.login(email_addr, password)
-    typ, _ = m.select("INBOX")
-    if typ != "OK":
-        raise RuntimeError("IMAP select INBOX failed")
-    return m
+    candidates = [mailbox] if mailbox == "INBOX" else [mailbox, "INBOX"]
+    for box in candidates:
+        typ, _ = m.select(box, readonly=True)
+        if typ == "OK":
+            if box != mailbox:
+                logger.warning(
+                    "IMAP %s: fallback INBOX (не открылось %r)", email_addr, mailbox
+                )
+            return m, box
+    raise RuntimeError(f"IMAP cannot select {mailbox!r} or INBOX")
 
 
 def _parse_uid_search(data: list) -> list[int]:
@@ -108,18 +125,21 @@ def fetch_inbox_mails_sync(
     password: str,
     last_uid: int | None,
     catch_up_recent: int = 0,
+    mailbox: str = "INBOX",
 ) -> tuple[list[MailRow], int | None]:
     """
-    INBOX only.
+    Входящие на ящик, добавленный в бот (не «тестовая» почта).
 
-    - UID > last_uid — новые письма.
-    - last_uid is None (первый опрос): UNSEEN в INBOX (не молча проглатывать ответы).
-    - catch_up_recent > 0: дополнительно последние N UID (догон для /imap_check).
-    """
+    - UID > last_uid
+    - UNSEEN
+    - catch_up_recent: последние N UID (догон /imap_check)
+  """
     m: imaplib.IMAP4 | None = None
-    account_lower = (email_addr or "").strip().lower()
+    selected_box = mailbox
     try:
-        m = _imap_connect(host, port, email_addr, password)
+        m, selected_box = _select_mailbox_with_fallback(
+            host, port, email_addr, password, mailbox
+        )
 
         typ, data = m.uid("search", None, "ALL")
         if typ != "OK" or not data or not data[0]:
@@ -152,15 +172,11 @@ def fetch_inbox_mails_sync(
 
         ordered = sorted(uids_to_fetch)[-DEFAULT_MAX_PER_ACCOUNT:]
         rows = _fetch_uids(m, ordered)
-
-        # Не показываем исходящие с того же ящика (копии в INBOX)
-        filtered: list[MailRow] = []
-        for row in rows:
-            if row[1] and row[1] == account_lower:
-                continue
-            filtered.append(row)
-
-        return filtered, int(max_uid)
+        if rows and selected_box == GMAIL_ALL_MAIL:
+            logger.debug(
+                "IMAP %s [%s]: fetched %s msg(s)", email_addr, selected_box, len(rows)
+            )
+        return rows, int(max_uid)
     finally:
         if m is not None:
             try:
@@ -169,7 +185,6 @@ def fetch_inbox_mails_sync(
                 pass
 
 
-# Совместимость
 def fetch_new_mails_sync(
     *,
     host: str,
@@ -178,6 +193,7 @@ def fetch_new_mails_sync(
     password: str,
     last_uid: int | None,
     catch_up_recent: int = 0,
+    mailbox: str = "INBOX",
 ) -> tuple[list[MailRow], int | None]:
     return fetch_inbox_mails_sync(
         host=host,
@@ -186,7 +202,19 @@ def fetch_new_mails_sync(
         password=password,
         last_uid=last_uid,
         catch_up_recent=catch_up_recent,
+        mailbox=mailbox,
     )
+
+
+def is_own_outgoing_copy(from_email: str, account_email: str, subject: str) -> bool:
+    """
+    Копия вашего исходящего в ящике (From = ваш email, не ответ продавца).
+    Ваше письмо «Guten Tag…» с ifepaki886 — не карточка; ответ продавца Re: — карточка.
+    """
+    if (from_email or "").strip().lower() != (account_email or "").strip().lower():
+        return False
+    sl = (subject or "").strip().lower()
+    return not sl.startswith(("re:", "fwd:", "aw:", "wg:", "sv:", "antw:", "ré:"))
 
 
 def is_google_system_mail(from_email: str, from_name: str, subject: str) -> bool:
@@ -198,7 +226,7 @@ def is_google_system_mail(from_email: str, from_name: str, subject: str) -> bool
     if not f or "@" not in f:
         return False
     local, _, domain = f.rpartition("@")
-    if domain in ("google.com", "accounts.google.com", "googlemail.com"):
+    if domain in ("google.com", "accounts.google.com"):
         return True
     if domain.endswith(".google.com"):
         return True
