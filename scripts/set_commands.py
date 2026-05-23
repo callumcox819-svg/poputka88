@@ -17,7 +17,8 @@ async def main() -> None:
     bot = Bot(token=settings.bot_token)
     try:
         await register_bot_commands(bot)
-        print("OK: команды зарегистрированы.")
+        print("OK: команды + MenuButtonCommands зарегистрированы.")
+        print("Если в Telegram всё ещё старое меню — вставьте BOTFATHER_COMMANDS.txt в @BotFather.")
     finally:
         await bot.session.close()
 

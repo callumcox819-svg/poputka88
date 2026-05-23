@@ -22,8 +22,9 @@ async def main() -> None:
     bot = Bot(token=settings.bot_token)
     try:
         await register_bot_commands(bot)
+        logger.info("Slash commands + MenuButtonCommands registered")
     except Exception:
-        logger.exception("Failed to register bot commands")
+        logger.exception("Failed to register bot commands — use /commands_help")
 
     dp = Dispatcher(storage=MemoryStorage())
     dp["settings"] = settings
