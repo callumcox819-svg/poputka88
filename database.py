@@ -1905,6 +1905,68 @@ async def get_incoming_mail(incoming_id: int, user_id: int) -> dict | None:
         return row.as_dict() if row else None
 
 
+async def propagate_gag_link_for_lead(
+    user_id: int,
+    *,
+    lead_id: int,
+    seller_email: str,
+    url: str,
+    gag_ad_id: str = "",
+    offer_price: str = "",
+) -> int:
+    """Обновить GAG-ссылку и цену на всех входящих письмах этого лида/продавца (для HTML)."""
+    link = (url or "").strip()[:2000]
+    if not link:
+        return 0
+    em = (seller_email or "").strip().lower()
+    price = (offer_price or "").strip()[:80]
+    lid = int(lead_id or 0)
+    async with db_connect() as db:
+        if lid > 0 and em:
+            cur = await db.execute(
+                """
+                UPDATE incoming_mails SET
+                    generated_link = ?,
+                    gag_ad_id = ?,
+                    generation_status = 'ok',
+                    generation_error = '',
+                    offer_price = ?
+                WHERE user_id = ? AND (lead_id = ? OR from_email = ?)
+                """,
+                (link, (gag_ad_id or "")[:64], price, user_id, lid, em),
+            )
+        elif lid > 0:
+            cur = await db.execute(
+                """
+                UPDATE incoming_mails SET
+                    generated_link = ?,
+                    gag_ad_id = ?,
+                    generation_status = 'ok',
+                    generation_error = '',
+                    offer_price = ?
+                WHERE user_id = ? AND lead_id = ?
+                """,
+                (link, (gag_ad_id or "")[:64], price, user_id, lid),
+            )
+        elif em:
+            cur = await db.execute(
+                """
+                UPDATE incoming_mails SET
+                    generated_link = ?,
+                    gag_ad_id = ?,
+                    generation_status = 'ok',
+                    generation_error = '',
+                    offer_price = ?
+                WHERE user_id = ? AND from_email = ?
+                """,
+                (link, (gag_ad_id or "")[:64], price, user_id, em),
+            )
+        else:
+            return 0
+        await db.commit()
+        return int(cur.rowcount or 0)
+
+
 async def save_incoming_gag_link(
     incoming_id: int,
     user_id: int,

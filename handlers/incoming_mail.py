@@ -19,7 +19,7 @@ from database import (
     update_incoming_mail_lead_snapshot,
 )
 from handlers.states import LeadPrice, MailReply
-from services.gag_link import create_gag_link_for_incoming
+from services.gag_link import create_gag_link_for_incoming, regenerate_gag_link_for_lead
 from services.gag_link_card import (
     build_link_card_caption,
     build_link_card_keyboard,
@@ -798,7 +798,7 @@ async def lead_price_set(message: Message, state: FSMContext) -> None:
     await state.clear()
     await message.answer(
         f"✅ Цена обновлена: <code>{e(text)}</code>\n"
-        "Карточка ссылки обновлена.",
+        "GAG-ссылка пересоздана — в HTML будет эта цена.",
         parse_mode="HTML",
         reply_to_message_id=int(anchor) if anchor else None,
     )
