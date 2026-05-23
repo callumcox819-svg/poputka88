@@ -21,6 +21,7 @@ BOT_COMMANDS: list[BotCommand] = [
     BotCommand(command="stop", description="Остановить рассылку"),
     BotCommand(command="stopcheck", description="Остановить проверку почт"),
     BotCommand(command="imap_check", description="Проверка входящих IMAP"),
+    BotCommand(command="stat", description="Статус рассылки"),
 ]
 
 # Языки, которые могли быть заданы в BotFather
@@ -85,4 +86,5 @@ BOTFATHER_COMMANDS_TEXT = """start - Запуск бота и меню
 send - Запустить рассылку
 stop - Остановить рассылку
 stopcheck - Остановить проверку почт
-imap_check - Проверка входящих IMAP"""
+imap_check - Проверка входящих IMAP
+stat - Статус рассылки"""

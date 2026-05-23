@@ -11,13 +11,30 @@ from services.imap_check import check_accounts
 
 router = Router()
 
+SETTINGS_MENU_TEXT = "Настройки"
 
-async def show_settings_menu(message: Message) -> None:
+
+def match_settings_menu_text(text: str | None) -> bool:
+    t = (text or "").strip().casefold().replace("\ufe0f", "")
+    if not t:
+        return False
+    if "настройки" in t:
+        return True
+    return t in {"settings", "setting", "⚙️ настройки"}
+
+
+async def open_settings_menu(message: Message, state: FSMContext) -> None:
+    await state.clear()
+    try:
+        await message.answer("⏳ Открываю настройки…")
+    except Exception:
+        pass
     uid = message.from_user.id
     n = await count_smtp_accounts(uid)
     await message.answer(
-        f"⚙️ Настройки\n\nSMTP-аккаунтов: {n}\nВыберите пункт:",
+        f"⚙️ <b>{SETTINGS_MENU_TEXT}</b>\n\nSMTP-аккаунтов: <b>{n}</b>\nВыберите пункт:",
         reply_markup=settings_inline(),
+        parse_mode="HTML",
     )
 
 
@@ -58,8 +75,9 @@ async def cb_accounts(cb: CallbackQuery) -> None:
     else:
         lines = ["📬 SMTP-аккаунты:\n"]
         for a in accounts:
+            prov = a.get("provider") or "—"
             lines.append(
-                f"• #{a['id']} {a['email']} ({a['sender_name'] or '—'})\n"
+                f"• #{a['id']} {a['email']} ({a['sender_name'] or '—'}) — {prov}\n"
                 f"  SMTP {a['smtp_host']}:{a['smtp_port']}"
             )
         await cb.message.answer("\n".join(lines))

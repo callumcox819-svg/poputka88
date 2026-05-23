@@ -1,5 +1,3 @@
-import asyncio
-
 from aiogram import F, Router
 from aiogram.filters import Command
 from aiogram.fsm.context import FSMContext
@@ -8,22 +6,15 @@ from aiogram.types import Message
 from config import Settings
 from database import get_latest_ready_campaign, get_running_campaign
 from handlers.mailing import begin_new_campaign, launch_campaign
-from handlers.states import EmailValidation
-from keyboards.main_menu import (
-    BTN_CHECK_EMAILS,
-    BTN_QUICK_ADD,
-    BTN_SETTINGS,
-    BTN_START_MAIL,
-    BTN_STOP_MAIL,
-    main_keyboard,
-)
+from handlers.settings import match_settings_menu_text, open_settings_menu
+from keyboards.main_menu import BTN_START_MAIL, BTN_STOP_MAIL, main_keyboard
 from services.campaign_runner import stop_user_mailings
 from services.validation_runner import stop_validation
 
 router = Router()
 
 
-@router.message(Command("stop"))
+@router.message(Command("stop", "stopsend"))
 async def cmd_stop(message: Message) -> None:
     ids = await stop_user_mailings(message.from_user.id)
     if ids:
@@ -61,14 +52,14 @@ async def cmd_send(message: Message, state: FSMContext, settings: Settings, bot)
     await begin_new_campaign(message, state)
 
 
-@router.message(Command("imap_check"))
+@router.message(Command("imap_check", "imap_diag"))
 async def cmd_imap_check(message: Message, bot) -> None:
     from handlers.settings import run_imap_check
 
     await run_imap_check(bot, message.chat.id, message.from_user.id)
 
 
-@router.message(F.text == BTN_STOP_MAIL)
+@router.message(F.text.in_({BTN_STOP_MAIL, "/stop", "/stopsend"}))
 async def btn_stop_mail(message: Message) -> None:
     await cmd_stop(message)
 
@@ -78,25 +69,6 @@ async def btn_start_mail(message: Message, state: FSMContext, settings: Settings
     await cmd_send(message, state, settings, bot)
 
 
-@router.message(F.text == BTN_SETTINGS)
-async def btn_settings(message: Message) -> None:
-    from handlers.settings import show_settings_menu
-
-    await show_settings_menu(message)
-
-
-@router.message(F.text == BTN_QUICK_ADD)
-async def btn_quick_add(message: Message, state: FSMContext) -> None:
-    from handlers.accounts import start_quick_add
-
-    await start_quick_add(message, state)
-
-
-@router.message(F.text == BTN_CHECK_EMAILS)
-async def btn_check_emails(message: Message, state: FSMContext) -> None:
-    await state.set_state(EmailValidation.waiting_list)
-    await message.answer(
-        "Пришлите список email для проверки (по строке или через запятую).\n"
-        "/stopcheck — остановить проверку.",
-        reply_markup=main_keyboard(),
-    )
+@router.message(F.func(lambda m: match_settings_menu_text(getattr(m, "text", None))))
+async def btn_settings(message: Message, state: FSMContext) -> None:
+    await open_settings_menu(message, state)

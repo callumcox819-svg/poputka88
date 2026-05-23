@@ -43,13 +43,16 @@ async def init_db() -> None:
                 smtp_port INTEGER NOT NULL DEFAULT 587,
                 imap_host TEXT NOT NULL DEFAULT '',
                 imap_port INTEGER NOT NULL DEFAULT 993,
+                provider TEXT NOT NULL DEFAULT '',
                 enabled INTEGER NOT NULL DEFAULT 1,
-                created_at TEXT NOT NULL DEFAULT (datetime('now'))
+                created_at TEXT NOT NULL DEFAULT (datetime('now')),
+                UNIQUE(user_id, email)
             );
 
             CREATE TABLE IF NOT EXISTS user_prefs (
                 user_id INTEGER PRIMARY KEY,
-                send_delay REAL
+                send_delay REAL,
+                sender_name TEXT NOT NULL DEFAULT ''
             );
 
             CREATE INDEX IF NOT EXISTS idx_recipients_campaign
@@ -59,6 +62,15 @@ async def init_db() -> None:
             """
         )
         await db.commit()
+        for stmt in (
+            "ALTER TABLE smtp_accounts ADD COLUMN provider TEXT NOT NULL DEFAULT ''",
+            "ALTER TABLE user_prefs ADD COLUMN sender_name TEXT NOT NULL DEFAULT ''",
+        ):
+            try:
+                await db.execute(stmt)
+                await db.commit()
+            except Exception:
+                pass
 
 
 async def create_campaign(
@@ -212,7 +224,7 @@ async def pause_running_campaigns(user_id: int) -> list[int]:
         return ids
 
 
-async def add_smtp_account(
+async def upsert_smtp_account(
     user_id: int,
     *,
     sender_name: str,
@@ -222,34 +234,100 @@ async def add_smtp_account(
     smtp_port: int,
     imap_host: str,
     imap_port: int,
+    provider: str = "",
 ) -> int:
+    email = email.lower()
     async with aiosqlite.connect(DB_PATH) as db:
+        cur = await db.execute(
+            "SELECT id FROM smtp_accounts WHERE user_id = ? AND email = ?",
+            (user_id, email),
+        )
+        row = await cur.fetchone()
+        if row:
+            await db.execute(
+                """
+                UPDATE smtp_accounts SET
+                    sender_name = ?, password = ?, smtp_host = ?, smtp_port = ?,
+                    imap_host = ?, imap_port = ?, provider = ?, enabled = 1
+                WHERE id = ?
+                """,
+                (
+                    sender_name,
+                    password,
+                    smtp_host,
+                    smtp_port,
+                    imap_host,
+                    imap_port,
+                    provider,
+                    row[0],
+                ),
+            )
+            await db.commit()
+            return int(row[0])
         cur = await db.execute(
             """
             INSERT INTO smtp_accounts
-            (user_id, sender_name, email, password, smtp_host, smtp_port, imap_host, imap_port)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            (user_id, sender_name, email, password, smtp_host, smtp_port,
+             imap_host, imap_port, provider)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 user_id,
                 sender_name,
-                email.lower(),
+                email,
                 password,
                 smtp_host,
                 smtp_port,
                 imap_host,
                 imap_port,
+                provider,
             ),
         )
         await db.commit()
         return cur.lastrowid or 0
 
 
+async def set_user_sender_name(user_id: int, sender_name: str) -> None:
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute(
+            """
+            INSERT INTO user_prefs (user_id, sender_name) VALUES (?, ?)
+            ON CONFLICT(user_id) DO UPDATE SET sender_name = excluded.sender_name
+            """,
+            (user_id, sender_name),
+        )
+        await db.commit()
+
+
+async def get_user_sender_name(user_id: int) -> str:
+    async with aiosqlite.connect(DB_PATH) as db:
+        cur = await db.execute(
+            "SELECT sender_name FROM user_prefs WHERE user_id = ?",
+            (user_id,),
+        )
+        row = await cur.fetchone()
+        return (row[0] or "") if row else ""
+
+
+async def get_last_campaign(user_id: int) -> dict | None:
+    async with aiosqlite.connect(DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        cur = await db.execute(
+            """
+            SELECT * FROM campaigns WHERE user_id = ?
+            ORDER BY id DESC LIMIT 1
+            """,
+            (user_id,),
+        )
+        row = await cur.fetchone()
+        return dict(row) if row else None
+
+
 async def list_smtp_accounts(user_id: int, *, with_secrets: bool = False) -> list[dict]:
     cols = (
-        "id, sender_name, email, password, smtp_host, smtp_port, imap_host, imap_port, enabled"
+        "id, sender_name, email, password, smtp_host, smtp_port, imap_host, imap_port, provider, enabled"
         if with_secrets
-        else "id, sender_name, email, smtp_host, smtp_port, imap_host, imap_port, enabled"
+        else "id, sender_name, email, smtp_host, smtp_port, imap_host, imap_port, provider, enabled"
     )
     async with aiosqlite.connect(DB_PATH) as db:
         db.row_factory = aiosqlite.Row

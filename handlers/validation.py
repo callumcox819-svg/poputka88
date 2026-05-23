@@ -5,7 +5,7 @@ from aiogram.fsm.context import FSMContext
 from aiogram.types import Message
 
 from handlers.states import EmailValidation
-from keyboards.main_menu import MENU_BUTTONS
+from keyboards.main_menu import is_main_menu_text
 from services.validation_runner import run_validation
 
 router = Router()
@@ -13,7 +13,7 @@ router = Router()
 
 @router.message(EmailValidation.waiting_list)
 async def on_validation_list(message: Message, state: FSMContext, bot) -> None:
-    if message.text in MENU_BUTTONS:
+    if is_main_menu_text(message.text):
         await state.clear()
         return
     text = message.text or ""

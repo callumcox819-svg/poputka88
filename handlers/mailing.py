@@ -9,7 +9,7 @@ from aiogram.utils.keyboard import InlineKeyboardBuilder
 from config import Settings
 from database import add_recipients, create_campaign, get_campaign, get_running_campaign
 from handlers.states import NewCampaign
-from keyboards.main_menu import MENU_BUTTONS, main_keyboard
+from keyboards.main_menu import is_main_menu_text, main_keyboard
 from services.campaign_runner import run_campaign
 from services.encoding import can_use_7bit, recommend_encoding
 
@@ -69,7 +69,7 @@ async def cmd_new(message: Message, state: FSMContext) -> None:
 
 @router.message(NewCampaign.subject)
 async def on_subject(message: Message, state: FSMContext) -> None:
-    if message.text in MENU_BUTTONS:
+    if is_main_menu_text(message.text):
         return
     await state.update_data(subject=message.text or "")
     await state.set_state(NewCampaign.body)
@@ -78,7 +78,7 @@ async def on_subject(message: Message, state: FSMContext) -> None:
 
 @router.message(NewCampaign.body)
 async def on_body(message: Message, state: FSMContext) -> None:
-    if message.text in MENU_BUTTONS:
+    if is_main_menu_text(message.text):
         return
     body = message.text or message.caption or ""
     await state.update_data(body=body)
@@ -134,7 +134,7 @@ async def on_recipients_file(
 async def on_recipients_text(
     message: Message, state: FSMContext, settings: Settings, bot
 ) -> None:
-    if message.text in MENU_BUTTONS:
+    if is_main_menu_text(message.text):
         return
     await _finish_recipients(message, state, settings, bot, message.text or "")
 
