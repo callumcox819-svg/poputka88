@@ -20,8 +20,9 @@ from aiogram.client.default import DefaultBotProperties
 from aiogram.enums import ParseMode
 
 from config import load_settings
-from database import init_db, list_imap_poll_accounts
+from database import count_imap_poll_accounts_raw, init_db, list_imap_poll_accounts
 from services.bot_users import seed_config_admins
+from services.db_backend import DB_PATH, is_postgres
 from services.incoming_worker import POLL_SEC, start_incoming_mail_worker
 
 logger = logging.getLogger(__name__)
@@ -68,6 +69,37 @@ async def main() -> None:
     settings = load_settings()
     await init_db()
     await seed_config_admins(settings.admin_ids)
+
+    if not is_postgres():
+        logger.critical(
+            "DATABASE_URL не задан — воркер использует пустой SQLite (%s). "
+            "На Railway: imap-worker → Variables → DATABASE_URL = Reference → "
+            "тот же Postgres, что у poputka88 (не копировать URL вручную с опечаткой).",
+            DB_PATH,
+        )
+        sys.exit(1)
+
+    stats = await count_imap_poll_accounts_raw()
+    logger.info(
+        "IMAP DB (Postgres): smtp total=%s enabled=%s with_password=%s pollable=%s",
+        stats["total"],
+        stats["enabled"],
+        stats["with_password"],
+        stats["pollable"],
+    )
+    if stats["pollable"] == 0:
+        if stats["enabled"] > 0:
+            logger.critical(
+                "0 ящиков для опроса при %s enabled SMTP — нет паролей или IMAP host. "
+                "Проверьте ⚡ Быстрое добавление на основном боте.",
+                stats["enabled"],
+            )
+        else:
+            logger.critical(
+                "0 SMTP в этой БД. DATABASE_URL на imap-worker должен быть Reference "
+                "на тот же Postgres, что у poputka88 (сейчас другая/пустая база)."
+            )
+        sys.exit(1)
 
     os.environ.setdefault("MAX_IMAP_CONCURRENT", "12")
 

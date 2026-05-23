@@ -1520,6 +1520,36 @@ async def find_lead_by_seller_key(user_id: int, seller_key: str) -> dict | None:
     return None
 
 
+async def count_imap_poll_accounts_raw() -> dict[str, int]:
+    """Диагностика: сколько SMTP в БД и сколько готовы к IMAP."""
+    from services.imap_accounts import resolve_imap_account
+
+    async with db_connect() as db:
+        cur = await db.execute("SELECT COUNT(*) FROM smtp_accounts")
+        total = int((await cur.fetchone())[0])
+        cur = await db.execute(
+            "SELECT COUNT(*) FROM smtp_accounts WHERE enabled = 1"
+        )
+        enabled = int((await cur.fetchone())[0])
+        cur = await db.execute(
+            """
+            SELECT id, user_id, sender_name, email, password, imap_host, imap_port,
+                   imap_last_uid, provider
+            FROM smtp_accounts WHERE enabled = 1
+            """
+        )
+        rows = [r.as_dict() for r in await cur.fetchall()]
+
+    with_password = sum(1 for r in rows if (r.get("password") or "").strip())
+    pollable = sum(1 for r in rows if resolve_imap_account(r))
+    return {
+        "total": total,
+        "enabled": enabled,
+        "with_password": with_password,
+        "pollable": pollable,
+    }
+
+
 async def list_imap_poll_accounts() -> list[dict]:
     """Аккаунты для IMAP-воркера (enabled=1; imap_host из БД или по домену email)."""
     from services.imap_accounts import resolve_imap_account

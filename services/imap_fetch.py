@@ -250,6 +250,8 @@ def is_google_system_mail(from_email: str, from_name: str, subject: str) -> bool
     f = (from_email or "").strip().lower()
     name = (from_name or "").strip().lower()
     subj = (subject or "").strip().lower()
+    if "mailer-daemon" in f or subj.startswith("delivery status notification"):
+        return True
     if name == "google":
         return True
     if not f or "@" not in f:

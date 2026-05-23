@@ -367,10 +367,15 @@ async def run_imap_check(bot: Bot, chat_id: int, user_id: int) -> None:
     except Exception:
         logger.exception("imap_check catch-up poll failed")
 
+    from utils.telegram_split import chunk_html_message
+
+    chunks = chunk_html_message(text)
     try:
-        await status.edit_text(text, parse_mode="HTML")
+        await status.edit_text(chunks[0], parse_mode="HTML")
     except Exception:
-        await bot.send_message(chat_id, text, parse_mode="HTML")
+        await bot.send_message(chat_id, chunks[0], parse_mode="HTML")
+    for part in chunks[1:]:
+        await bot.send_message(chat_id, part, parse_mode="HTML")
 
 
 # Старые callback из простого меню

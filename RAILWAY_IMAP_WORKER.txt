@@ -76,10 +76,17 @@
 
 13. **Replicas** = **1**
 
-14. **Variables** — скопируй с poputka88 (кнопка Reference / Duplicate):
+14. **Variables** — ОБЯЗАТЕЛЬНО:
 
     BOT_TOKEN              = (тот же, что у бота)
-    DATABASE_URL           = Reference → Postgres (тот же!)
+
+    DATABASE_URL           = **Reference → Postgres** (тот же сервис БД, что у poputka88!)
+                           НЕ оставляй пустым — иначе в логах:
+                           «total_mailboxes=0» и письма не приходят сами.
+
+    Проверка после деплоя в Logs imap-worker:
+                           IMAP DB (Postgres): … pollable=69  (или ваше число ящиков)
+                           НЕ должно быть: pollable=0
 
     ENABLE_INCOMING_MAIL   = 1
 
