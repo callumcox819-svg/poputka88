@@ -8,6 +8,7 @@ from typing import Any
 
 from database import get_imap_last_uid
 from services.imap_accounts import resolve_imap_account
+from services.imap_fetch import imap_uid_search
 
 
 def _imap_connect(host: str, port: int, email: str, password: str) -> imaplib.IMAP4:
@@ -20,13 +21,6 @@ def _imap_connect(host: str, port: int, email: str, password: str) -> imaplib.IM
     if typ != "OK":
         raise RuntimeError("IMAP select INBOX failed")
     return conn
-
-
-def _uid_list(conn: imaplib.IMAP4) -> list[int]:
-    typ, data = conn.uid("search", None, "ALL")
-    if typ != "OK" or not data or not data[0]:
-        return []
-    return [int(x) for x in data[0].split() if str(x).isdigit()]
 
 
 def check_inbox_detailed_sync(
@@ -47,18 +41,10 @@ def check_inbox_detailed_sync(
         conn = _imap_connect(
             imap_host.strip(), int(imap_port or 993), email, password
         )
-        uids = _uid_list(conn)
+        uids = imap_uid_search(conn, "ALL")
+        unseen_uids = imap_uid_search(conn, "UNSEEN")
         max_uid = max(uids) if uids else 0
-
-        typ, data = conn.search(None, "UNSEEN")
-        unseen_legacy = (
-            len(data[0].split()) if typ == "OK" and data and data[0] else 0
-        )
-
-        typ2, data2 = conn.uid("search", None, "UNSEEN")
-        unseen_uid = 0
-        if typ2 == "OK" and data2 and data2[0]:
-            unseen_uid = len([x for x in data2[0].split() if x])
+        unseen = len(unseen_uids)
 
         conn.logout()
 
@@ -67,7 +53,7 @@ def check_inbox_detailed_sync(
             "account_id": account_id,
             "ok": True,
             "total": len(uids),
-            "unseen": max(unseen_legacy, unseen_uid),
+            "unseen": unseen,
             "max_uid": max_uid,
             "imap_host": imap_host,
         }
@@ -104,8 +90,12 @@ async def check_account_imap(acc: dict) -> dict[str, Any]:
         max_uid = int(result.get("max_uid") or 0)
         result["last_seen_uid"] = last_seen
         if last_seen is None:
-            result["pending_new"] = 0
-            result["baseline_note"] = "бот ещё не опрашивал (первый цикл без старых писем)"
+            result["pending_new"] = unseen
+            result["baseline_note"] = (
+                "первый опрос: в бот пойдут непрочитанные (UNSEEN)"
+                if unseen
+                else "нет непрочитанных в INBOX"
+            )
         else:
             pending = max(0, max_uid - int(last_seen))
             result["pending_new"] = pending
@@ -144,7 +134,9 @@ def format_imap_report(results: list[dict]) -> str:
         else:
             extra = " · бот синхронизирован"
 
-        if unseen > 0 and pending > 0:
+        if unseen > 0 and last is None:
+            hint = " ⚠️ непрочитанные — бот заберёт при опросе /imap_check"
+        elif unseen > 0 and pending > 0:
             hint = " ⚠️ есть непрочитанные — бот должен прислать в TG"
         elif unseen > 0 and last is not None and pending == 0:
             hint = " ℹ️ UNSEEN есть, но UID уже учтены (возможно прочитаны вручную)"

@@ -160,6 +160,7 @@ async def _process_account(
             email_addr=email_addr,
             password=password,
             last_uid=last_uid,
+            catch_up_recent=max(0, int(catch_up_recent or 0)),
         )
     except Exception as exc:
         logger.error("IMAP acc_id=%s %s: %s", acc_id, email_addr, exc)
@@ -275,7 +276,7 @@ async def poll_incoming_for_user(
     accounts = [
         a for a in await list_imap_poll_accounts() if int(a.get("user_id") or 0) == uid
     ]
-    recent = 0
+    recent = 40 if catch_up else 0
     total = 0
     for acc in accounts:
         total += await _process_account(bot, acc, catch_up_recent=recent)

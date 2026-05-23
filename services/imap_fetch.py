@@ -1,19 +1,26 @@
 """
-IMAP INBOX — как happy88: UID > imap_last_uid, первый опрос = baseline (без старых писем).
+IMAP INBOX: UID > imap_last_uid.
+Первый опрос — непрочитанные (UNSEEN), дальше только новые UID.
+UID SEARCH без charset (Gmail); fallback SEQUENCE + FETCH (UID).
 """
 
 from __future__ import annotations
 
 import email
 import imaplib
+import logging
 import re
 from email.header import decode_header
 from email.utils import parseaddr
+
+logger = logging.getLogger(__name__)
 
 DEFAULT_MAX_PER_ACCOUNT = 15
 
 # uid, from_email, from_name, subject, date, body, message_id
 MailRow = tuple[str, str, str, str, str, str, str]
+
+_UID_RE = re.compile(rb"UID\s+(\d+)")
 
 
 def _decode_mime_words(s: str) -> str:
@@ -55,6 +62,81 @@ def _extract_text_from_msg(msg: email.message.Message) -> str:
         return payload.decode("utf-8", errors="ignore").strip()
 
 
+def _parse_uid_blob(blob: bytes | str) -> list[int]:
+    if isinstance(blob, str):
+        blob = blob.encode("utf-8", errors="ignore")
+    out: list[int] = []
+    for part in blob.split():
+        if part.isdigit():
+            out.append(int(part))
+    return out
+
+
+def _uids_from_fetch_uid(data: list) -> list[int]:
+    uids: list[int] = []
+    for item in data or []:
+        chunk = item[1] if isinstance(item, tuple) and len(item) > 1 else item
+        if chunk is None:
+            continue
+        if isinstance(chunk, str):
+            chunk = chunk.encode("utf-8", errors="ignore")
+        if not isinstance(chunk, bytes):
+            continue
+        for m in _UID_RE.finditer(chunk):
+            uids.append(int(m.group(1)))
+    return sorted(set(uids))
+
+
+def imap_uid_search(m: imaplib.IMAP4, criteria: str = "ALL") -> list[int]:
+    """
+    Список UID в текущей выбранной папке.
+    Gmail часто отвечает пусто на UID SEARCH с charset=None — пробуем варианты + fallback.
+    """
+    crit = (criteria or "ALL").strip().upper() or "ALL"
+
+    attempts: list[tuple[str, tuple]] = [
+        ("uid_search_plain", ("SEARCH", crit)),
+        ("uid_search_utf8", ("search", "CHARSET", "UTF-8", crit)),
+        ("uid_search_legacy", ("search", None, crit)),
+    ]
+    for tag, args in attempts:
+        try:
+            typ, data = m.uid(*args)
+            if typ == "OK" and data and data[0]:
+                uids = _parse_uid_blob(data[0])
+                if uids:
+                    return sorted(uids)
+        except Exception as exc:
+            logger.debug("IMAP %s %s failed: %s", tag, crit, exc)
+
+    try:
+        typ, data = m.search(None, crit)
+        if typ != "OK" or not data or not data[0]:
+            return []
+        seqs = [x.decode() if isinstance(x, bytes) else str(x) for x in data[0].split()]
+        if not seqs:
+            return []
+        # не тащим тысячи — хвост
+        if len(seqs) > 80:
+            seqs = seqs[-80:]
+        seq_set = ",".join(seqs)
+        typ2, data2 = m.fetch(seq_set, "(UID)")
+        if typ2 != "OK":
+            return []
+        uids = _uids_from_fetch_uid(data2)
+        if uids:
+            logger.info(
+                "IMAP UID fallback SEQUENCE %s → %s uid(s) for criteria %s",
+                len(seqs),
+                len(uids),
+                crit,
+            )
+        return uids
+    except Exception as exc:
+        logger.debug("IMAP sequence fallback %s failed: %s", crit, exc)
+        return []
+
+
 def _imap_connect_inbox(host: str, port: int, email_addr: str, password: str) -> imaplib.IMAP4:
     if int(port) == 993:
         m = imaplib.IMAP4_SSL(host, int(port), timeout=45)
@@ -67,6 +149,34 @@ def _imap_connect_inbox(host: str, port: int, email_addr: str, password: str) ->
     return m
 
 
+def _fetch_uids(m: imaplib.IMAP4, uids: list[int]) -> list[MailRow]:
+    out: list[MailRow] = []
+    for uid in uids:
+        typ2, msg_data = m.uid("fetch", str(uid), "(RFC822)")
+        if typ2 != "OK" or not msg_data:
+            continue
+        raw = None
+        for item in msg_data:
+            if isinstance(item, tuple) and len(item) > 1 and item[1]:
+                raw = item[1]
+                break
+        if not raw:
+            continue
+        msg = email.message_from_bytes(raw)
+        from_raw = _decode_mime_words(msg.get("From", ""))
+        subject = _decode_mime_words(msg.get("Subject", ""))
+        date_str = msg.get("Date", "") or ""
+        name, addr = parseaddr(from_raw)
+        from_email = (addr or "").strip().lower()
+        from_name = (name or "").strip()
+        body = _extract_text_from_msg(msg)
+        message_id = (msg.get("Message-ID") or "").strip()
+        out.append(
+            (str(uid), from_email, from_name, subject, date_str, body, message_id)
+        )
+    return out
+
+
 def fetch_new_mails_sync(
     *,
     host: str,
@@ -74,57 +184,54 @@ def fetch_new_mails_sync(
     email_addr: str,
     password: str,
     last_uid: int | None,
+    *,
+    bootstrap_unseen: bool = True,
+    catch_up_recent: int = 0,
 ) -> tuple[list[MailRow], int | None]:
     """
-    INBOX: новые UID > last_uid.
-    Первый опрос (last_uid is None): не шлём старые письма, last_uid = max(uid).
+    INBOX: UID > last_uid.
+    Первый опрос (last_uid is None): UNSEEN → в бот (не вся история).
+    catch_up_recent: при ручном догоне — последние N UID поверх last_uid.
     """
     m: imaplib.IMAP4 | None = None
     try:
         m = _imap_connect_inbox(host, port, email_addr, password)
-        typ, data = m.uid("search", None, "ALL")
-        if typ != "OK" or not data or not data[0]:
-            return [], last_uid
+        inbox_uids = imap_uid_search(m, "ALL")
+        max_uid = max(inbox_uids) if inbox_uids else None
 
-        inbox_uids = [int(x) for x in data[0].split() if str(x).isdigit()]
+        if last_uid is None:
+            new_uids: list[int] = []
+            if bootstrap_unseen:
+                new_uids = imap_uid_search(m, "UNSEEN")
+                if new_uids:
+                    new_uids = sorted(new_uids)[-DEFAULT_MAX_PER_ACCOUNT:]
+                    logger.info(
+                        "IMAP first poll %s: %s UNSEEN uid(s), max_uid=%s",
+                        email_addr,
+                        len(new_uids),
+                        max_uid,
+                    )
+            if not new_uids:
+                if max_uid is not None:
+                    return [], int(max_uid)
+                return [], last_uid
+            mails = _fetch_uids(m, new_uids)
+            new_last = int(max_uid) if max_uid is not None else max(new_uids)
+            return mails, new_last
+
         if not inbox_uids:
             return [], last_uid
 
         max_uid = max(inbox_uids)
-
-        if last_uid is None:
-            return [], int(max_uid)
-
         new_uids = sorted(u for u in inbox_uids if u > int(last_uid))
+        if catch_up_recent > 0 and not new_uids:
+            floor_uid = max(0, int(max_uid) - int(catch_up_recent))
+            new_uids = sorted(u for u in inbox_uids if u > floor_uid and u <= int(max_uid))
         if not new_uids:
             return [], int(max_uid)
 
         new_uids = new_uids[-DEFAULT_MAX_PER_ACCOUNT:]
-        out: list[MailRow] = []
-        for uid in new_uids:
-            typ2, msg_data = m.uid("fetch", str(uid), "(RFC822)")
-            if typ2 != "OK" or not msg_data:
-                continue
-            raw = None
-            for item in msg_data:
-                if isinstance(item, tuple) and len(item) > 1 and item[1]:
-                    raw = item[1]
-                    break
-            if not raw:
-                continue
-            msg = email.message_from_bytes(raw)
-            from_raw = _decode_mime_words(msg.get("From", ""))
-            subject = _decode_mime_words(msg.get("Subject", ""))
-            date_str = msg.get("Date", "") or ""
-            name, addr = parseaddr(from_raw)
-            from_email = (addr or "").strip().lower()
-            from_name = (name or "").strip()
-            body = _extract_text_from_msg(msg)
-            message_id = (msg.get("Message-ID") or "").strip()
-            out.append(
-                (str(uid), from_email, from_name, subject, date_str, body, message_id)
-            )
-        return out, int(max_uid)
+        return _fetch_uids(m, new_uids), int(max_uid)
     finally:
         if m is not None:
             try:
@@ -190,7 +297,6 @@ def service_label_from_body(body: str) -> str:
     return ""
 
 
-# Совместимость со старыми вызовами
 def fetch_inbox_mails_sync(
     *,
     host: str,
@@ -201,13 +307,14 @@ def fetch_inbox_mails_sync(
     catch_up_recent: int = 0,
     mailbox: str = "INBOX",
 ) -> tuple[list[MailRow], int | None]:
-    del catch_up_recent, mailbox
+    del mailbox
     return fetch_new_mails_sync(
         host=host,
         port=port,
         email_addr=email_addr,
         password=password,
         last_uid=last_uid,
+        catch_up_recent=catch_up_recent,
     )
 
 
@@ -221,11 +328,12 @@ def fetch_account_mails_sync(
     catch_up_recent: int = 0,
     is_gmail: bool = False,
 ) -> tuple[list[MailRow], int | None]:
-    del catch_up_recent, is_gmail
+    del is_gmail
     return fetch_new_mails_sync(
         host=host,
         port=port,
         email_addr=email_addr,
         password=password,
         last_uid=last_uid,
+        catch_up_recent=catch_up_recent,
     )
