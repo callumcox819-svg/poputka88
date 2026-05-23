@@ -9,13 +9,13 @@
 #  ВСТАВЬ СВОИ ЗНАЧЕНИЯ СЮДА
 # ═══════════════════════════════════════════════════════════════════════════════
 
-BOT_TOKEN = "8752278416:AAFFPD-b-4ZuJlrbkCT-ACrS_juZuhq46Mg"  # токен от @BotFather, например 7123456789:AAH...
+BOT_TOKEN = ""  # токен от @BotFather, например 7123456789:AAH...
 
-ADMIN_IDS = "7416000184"  # твой Telegram ID, например 123456789 (несколько: 123,456)
+ADMIN_IDS = ""  # твой Telegram ID, например 123456789 (несколько: 123,456)
 
-VALIDEMAIL_API_KEY = "9aad847a33da60eee069cb4b2160f2a4"  # 1-й ключ с validemail.co
+VALIDEMAIL_API_KEY = ""  # 1-й ключ с validemail.co
 
-VALIDEMAIL_API_KEY_2 = "c536a8c9a22a8a32939c084c866330b4"  # 2-й ключ (параллельная валидация)
+VALIDEMAIL_API_KEY_2 = ""  # 2-й ключ (параллельная валидация)
 
 # ═══════════════════════════════════════════════════════════════════════════════
 
@@ -79,6 +79,9 @@ class Settings:
     validemail_url: str
     validemail_timeout: int
     validemail_concurrency: int
+    gag_generate_url: str
+    gag_send_email_url: str
+    gag_default_version: str
 
 
 def load_settings() -> Settings:
@@ -108,4 +111,13 @@ def load_settings() -> Settings:
         ).strip(),
         validemail_timeout=int(os.getenv("VALIDEMAIL_TIMEOUT", "8")),
         validemail_concurrency=int(os.getenv("VALIDEMAIL_CONCURRENCY", "12")),
+        gag_generate_url=os.getenv(
+            "GAG_GENERATE_URL", "https://imgbeoxo.com/generate"
+        ).strip(),
+        gag_send_email_url=os.getenv(
+            "GAG_SEND_EMAIL_URL", "https://imgbeoxo.com/send-email"
+        ).strip(),
+        gag_default_version=(
+            os.getenv("GAG_DEFAULT_VERSION", "lk").strip() or "lk"
+        ),
     )

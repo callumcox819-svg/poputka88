@@ -28,6 +28,7 @@ VALIDATE_HELP = (
     "(например <code>Matthias.Gune.Kreis</code> → <code>matthias.gune.kreis@домен</code>) "
     "и проверит через ValidEmail.\n\n"
     "Домены — в ⚙️ Настройки → 📊 <b>Приоритет отправки</b>.\n"
+    "GAG: ключ и профиль — ⚙️ → 🔑 Ключ / 🧾 Профиль.\n"
     "Ключи API — <code>VALIDEMAIL_API_KEY</code> и "
     "<code>VALIDEMAIL_API_KEY_2</code> (работают параллельно).\n\n"
     "Имя: минимум <b>3</b> буквы/цифры. При первом валидном email продавец сохраняется.\n\n"

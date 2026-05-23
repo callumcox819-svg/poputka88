@@ -31,10 +31,6 @@ router = Router()
 
 SETTINGS_MENU_TEXT = "Настройки"
 DOMAIN_PRIORITY_KEY = "domain_priority"
-GAG_API_KEY = "gag_api_key"
-GAG_PROFILE_TITLE = "gag_profile_title"
-GAG_PROFILE_NAME = "gag_profile_name"
-GAG_PROFILE_ADDRESS = "gag_profile_address"
 
 
 class SettingsInput(StatesGroup):
@@ -42,10 +38,6 @@ class SettingsInput(StatesGroup):
     timings = State()
     spoof_name = State()
     spoof_subject = State()
-    api_key = State()
-    profile_title = State()
-    profile_name = State()
-    profile_address = State()
 
 
 def match_settings_menu_text(text: str | None) -> bool:
@@ -311,123 +303,6 @@ async def spoof_subject_save(message: Message, state: FSMContext) -> None:
     await message.answer(f"✅ Тема сохранена: <b>{e(subj)}</b>", parse_mode="HTML")
     kb = await settings_kb_for(message.from_user.id)
     await message.answer(f"⚙️ <b>{SETTINGS_MENU_TEXT}</b>", reply_markup=kb, parse_mode="HTML")
-
-
-# ——— Ключ API ———
-
-@router.callback_query(F.data == "gag_show:key")
-async def gag_show_key(callback: CallbackQuery, state: FSMContext) -> None:
-    await state.clear()
-    cur = await get_setting(callback.from_user.id, GAG_API_KEY) or "—"
-    kb = InlineKeyboardMarkup(
-        inline_keyboard=[
-            [InlineKeyboardButton(text="🛠 Установить", callback_data="gag_set:key")],
-            [InlineKeyboardButton(text="⬅️ Назад", callback_data="settings_open")],
-        ]
-    )
-    await cq_edit_text(
-        callback,
-        f"🔑 <b>API-ключ</b>\n\nТекущий: <code>{e(cur)}</code>",
-        reply_markup=kb,
-    )
-    await callback.answer()
-
-
-@router.callback_query(F.data == "gag_set:key")
-async def gag_set_key(callback: CallbackQuery, state: FSMContext) -> None:
-    await state.set_state(SettingsInput.api_key)
-    await cq_edit_text(
-        callback,
-        "Отправьте API-ключ одним сообщением (или <code>-</code> чтобы очистить):",
-        reply_markup=back_settings_kb(),
-    )
-    await callback.answer()
-
-
-@router.message(SettingsInput.api_key)
-async def gag_key_save(message: Message, state: FSMContext) -> None:
-    val = (message.text or "").strip()
-    if val == "-":
-        val = ""
-    await set_setting(message.from_user.id, GAG_API_KEY, val)
-    await state.clear()
-    await message.answer("✅ Ключ сохранён." if val else "✅ Ключ очищен.")
-    kb = await settings_kb_for(message.from_user.id)
-    await message.answer(f"⚙️ <b>{SETTINGS_MENU_TEXT}</b>", reply_markup=kb, parse_mode="HTML")
-
-
-# ——— Профиль ———
-
-def _profile_kb() -> InlineKeyboardMarkup:
-    return InlineKeyboardMarkup(
-        inline_keyboard=[
-            [InlineKeyboardButton(text="➕ Создать профиль", callback_data="gag_profile_create")],
-            [InlineKeyboardButton(text="⬅️ Назад", callback_data="settings_open")],
-        ]
-    )
-
-
-@router.callback_query(F.data == "gag_show:profile")
-async def gag_show_profile(callback: CallbackQuery, state: FSMContext) -> None:
-    await state.clear()
-    uid = callback.from_user.id
-    title = (await get_setting(uid, GAG_PROFILE_TITLE) or "").strip() or "—"
-    name = (await get_setting(uid, GAG_PROFILE_NAME) or "").strip() or "—"
-    addr = (await get_setting(uid, GAG_PROFILE_ADDRESS) or "").strip() or "—"
-    await cq_edit_text(
-        callback,
-        "🧾 <b>Профиль</b>\n\n"
-        f"Название: <code>{e(title)}</code>\n"
-        f"Имя: <code>{e(name)}</code>\n"
-        f"Адрес: <code>{e(addr)}</code>",
-        reply_markup=_profile_kb(),
-    )
-    await callback.answer()
-
-
-@router.callback_query(F.data == "gag_profile_create")
-async def gag_profile_create(callback: CallbackQuery, state: FSMContext) -> None:
-    await state.set_state(SettingsInput.profile_title)
-    await cq_edit_text(
-        callback,
-        "Отправьте <b>название профиля</b>:",
-        reply_markup=back_settings_kb(),
-    )
-    await callback.answer()
-
-
-@router.message(SettingsInput.profile_title)
-async def profile_title(message: Message, state: FSMContext) -> None:
-    t = (message.text or "").strip()
-    if not t:
-        return await message.answer("Пустое значение.")
-    await state.update_data(profile_title=t)
-    await state.set_state(SettingsInput.profile_name)
-    await message.answer("Отправьте <b>имя покупателя</b>:", parse_mode="HTML")
-
-
-@router.message(SettingsInput.profile_name)
-async def profile_name(message: Message, state: FSMContext) -> None:
-    n = (message.text or "").strip()
-    if not n:
-        return await message.answer("Пустое значение.")
-    await state.update_data(profile_name=n)
-    await state.set_state(SettingsInput.profile_address)
-    await message.answer("Отправьте <b>адрес</b>:", parse_mode="HTML")
-
-
-@router.message(SettingsInput.profile_address)
-async def profile_address(message: Message, state: FSMContext) -> None:
-    addr = (message.text or "").strip()
-    if not addr:
-        return await message.answer("Пустое значение.")
-    data = await state.get_data()
-    uid = message.from_user.id
-    await set_setting(uid, GAG_PROFILE_TITLE, data.get("profile_title", ""))
-    await set_setting(uid, GAG_PROFILE_NAME, data.get("profile_name", ""))
-    await set_setting(uid, GAG_PROFILE_ADDRESS, addr)
-    await state.clear()
-    await message.answer("✅ Профиль сохранён.", reply_markup=main_keyboard())
 
 
 # ——— IMAP check (команда) ———
