@@ -325,26 +325,30 @@ async def spoof_subject_save(message: Message, state: FSMContext) -> None:
 # ——— IMAP check (команда) ———
 
 async def run_imap_check(bot: Bot, chat_id: int, user_id: int) -> None:
-    from services.imap_check import check_accounts
-    from database import list_smtp_accounts
+    from database import list_all_smtp_accounts
+    from services.imap_check import check_accounts_imap, format_imap_report
 
-    accounts = await list_smtp_accounts(user_id, with_secrets=True)
-    if not accounts:
+    accounts = await list_all_smtp_accounts(user_id, with_secrets=True)
+    active = [a for a in accounts if int(a.get("enabled", 1))]
+    if not active:
         await bot.send_message(
             chat_id,
-            "Нет аккаунтов. «⚡ Быстрое добавление».",
+            "Нет активных аккаунтов для IMAP. «⚡ Быстрое добавление».",
             reply_markup=main_keyboard(),
         )
         return
-    await bot.send_message(chat_id, f"Проверяю входящие ({len(accounts)} акк.)…")
-    results = await check_accounts(accounts)
-    lines = ["📥 <b>IMAP</b>\n"]
-    for r in results:
-        if r["ok"]:
-            lines.append(f"✅ {r['email']}: непр. {r['unseen']}, всего {r['total']}")
-        else:
-            lines.append(f"❌ {r['email']}: {r.get('error', 'ошибка')}")
-    await bot.send_message(chat_id, "\n".join(lines), reply_markup=main_keyboard(), parse_mode="HTML")
+
+    status = await bot.send_message(
+        chat_id,
+        f"📥 Проверяю входящие IMAP ({len(active)} ящ.)…",
+        parse_mode="HTML",
+    )
+    results = await check_accounts_imap(active)
+    text = format_imap_report(results)
+    try:
+        await status.edit_text(text, parse_mode="HTML")
+    except Exception:
+        await bot.send_message(chat_id, text, parse_mode="HTML")
 
 
 # Старые callback из простого меню

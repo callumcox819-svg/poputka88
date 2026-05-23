@@ -629,6 +629,46 @@ async def delete_smtp_account(user_id: int, account_id: int) -> bool:
         return cur.rowcount > 0
 
 
+async def list_all_smtp_accounts(
+    user_id: int, *, with_secrets: bool = False
+) -> list[dict]:
+    """Все ящики пользователя (включая отключённые)."""
+    async with db_connect() as db:
+        cur = await db.execute(
+            f"""
+            SELECT {_smtp_account_cols(with_secrets=with_secrets)}
+            FROM smtp_accounts WHERE user_id = ?
+            ORDER BY id
+            """,
+            (user_id,),
+        )
+        return [r.as_dict() for r in await cur.fetchall()]
+
+
+async def delete_inactive_smtp_accounts(user_id: int) -> int:
+    """Удалить ящики с enabled=0 (неверный пароль / полностью отключены)."""
+    async with db_connect() as db:
+        cur = await db.execute(
+            """
+            DELETE FROM smtp_accounts
+            WHERE user_id = ? AND enabled = 0
+            """,
+            (user_id,),
+        )
+        await db.commit()
+        return cur.rowcount or 0
+
+
+async def delete_all_smtp_accounts(user_id: int) -> int:
+    async with db_connect() as db:
+        cur = await db.execute(
+            "DELETE FROM smtp_accounts WHERE user_id = ?",
+            (user_id,),
+        )
+        await db.commit()
+        return cur.rowcount or 0
+
+
 async def count_smtp_accounts(user_id: int) -> int:
     async with db_connect() as db:
         cur = await db.execute(
