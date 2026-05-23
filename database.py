@@ -524,6 +524,28 @@ async def get_user_sender_name(user_id: int) -> str:
         return (row[0] or "") if row else ""
 
 
+async def get_mailing_sender_display(user_id: int) -> str | None:
+    """Имя From для массовой рассылки — из smtp_accounts, не из HTML-спуфинга."""
+    accounts = await list_smtp_mailing_accounts(user_id)
+    if not accounts:
+        accounts = await list_smtp_accounts(user_id)
+    names: list[str] = []
+    seen: set[str] = set()
+    for acc in accounts:
+        n = (acc.get("sender_name") or "").strip()
+        if n and n not in seen:
+            seen.add(n)
+            names.append(n)
+    if not names:
+        fallback = (await get_user_sender_name(user_id) or "").strip()
+        return fallback or None
+    if len(names) == 1:
+        return names[0]
+    if len(names) <= 3:
+        return ", ".join(names)
+    return f"{names[0]} (+{len(names) - 1} других)"
+
+
 async def get_last_campaign(user_id: int) -> dict | None:
     async with db_connect() as db:
         cur = await db.execute(

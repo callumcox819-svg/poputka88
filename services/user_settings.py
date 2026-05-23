@@ -6,6 +6,7 @@ from services.db_backend import db_connect
 
 TOGGLE_KEYS = frozenset({"smart_mode", "spoofing", "block_control"})
 SPOOF_SUBJECT_KEY = "spoof_subject"
+SPOOF_FROM_NAME_KEY = "spoof_from_name"
 
 
 async def get_setting(user_id: int, key: str) -> str | None:

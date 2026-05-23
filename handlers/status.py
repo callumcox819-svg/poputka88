@@ -9,7 +9,7 @@ from database import (
     count_validated_leads,
     get_last_campaign,
     get_running_campaign,
-    get_user_sender_name,
+    get_mailing_sender_display,
 )
 from keyboards.main_menu import BTN_STATUS, main_keyboard
 
@@ -24,12 +24,12 @@ async def cmd_status(message: Message, settings: Settings) -> None:
     last = await get_last_campaign(uid)
     accounts = await count_smtp_accounts(uid)
     mailing = await count_smtp_mailing_accounts(uid)
-    sender = await get_user_sender_name(uid)
+    sender = await get_mailing_sender_display(uid)
 
     lines = ["📊 <b>Статус</b>\n"]
 
     if sender:
-        lines.append(f"Имя отправителя: <b>{sender}</b>")
+        lines.append(f"Имя для рассылки: <b>{sender}</b>")
 
     if accounts != mailing:
         lines.append(

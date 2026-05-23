@@ -2,8 +2,13 @@
 
 from __future__ import annotations
 
-from database import get_user_sender_name
-from services.user_settings import SPOOF_SUBJECT_KEY, get_setting
+from database import get_user_sender_name, list_smtp_mailing_accounts
+from services.user_settings import (
+    SPOOF_FROM_NAME_KEY,
+    SPOOF_SUBJECT_KEY,
+    get_setting,
+    set_setting,
+)
 
 SPOOFING_KEY = "spoofing"
 
@@ -18,8 +23,27 @@ def apply_nick_to_html(html: str, nick: str | None) -> str:
     return html.replace("{{NICK}}", nick)
 
 
+async def _resolve_spoof_from_name(user_id: int) -> str:
+    name = (await get_setting(user_id, SPOOF_FROM_NAME_KEY) or "").strip()
+    if name:
+        return name
+    legacy = (await get_user_sender_name(user_id) or "").strip()
+    if not legacy:
+        return ""
+    accounts = await list_smtp_mailing_accounts(user_id)
+    account_names = {
+        (a.get("sender_name") or "").strip()
+        for a in accounts
+        if (a.get("sender_name") or "").strip()
+    }
+    if account_names and legacy in account_names:
+        return ""
+    await set_setting(user_id, SPOOF_FROM_NAME_KEY, legacy)
+    return legacy
+
+
 async def get_mandatory_spoof_name(user_id: int) -> str:
-    name = (await get_user_sender_name(user_id) or "").strip()
+    name = await _resolve_spoof_from_name(user_id)
     if not name:
         raise HtmlOutboundError(
             "Для HTML задайте имя в ⚙️ Настройки → 👤 Имя для спуфинга (минимум 2 слова)."

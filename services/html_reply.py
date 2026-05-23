@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
-from database import get_user_sender_name, get_validated_lead_by_email, get_validated_lead_by_id
+from database import get_validated_lead_by_email, get_validated_lead_by_id
 from services.gag_keys import GAG_PROFILE_ADDRESS_KEY, GAG_PROFILE_NAME_KEY
+from services.html_spoof import _resolve_spoof_from_name
 from services.user_settings import SPOOF_SUBJECT_KEY, get_setting
 
 
@@ -13,7 +14,7 @@ async def get_mandatory_html_subject(user_id: int) -> str | None:
 
 
 async def get_mandatory_html_sender_name(user_id: int) -> str | None:
-    name = (await get_user_sender_name(user_id) or "").strip()
+    name = await _resolve_spoof_from_name(user_id)
     return name or None
 
 

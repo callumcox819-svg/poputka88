@@ -27,6 +27,7 @@ from keyboards.main_menu import main_keyboard
 from keyboards.settings_happy import back_settings_kb, settings_menu_kb
 from services.mailing_timing import load_timing, save_timing
 from services.user_settings import (
+    SPOOF_FROM_NAME_KEY,
     SPOOF_SUBJECT_KEY,
     get_setting,
     get_toggle_flags,
@@ -246,7 +247,9 @@ async def timings_set(message: Message, state: FSMContext) -> None:
 async def spoof_name_menu(callback: CallbackQuery, state: FSMContext) -> None:
     await state.clear()
     uid = callback.from_user.id
-    cur_name = await get_user_sender_name(uid) or "— не задано —"
+    cur_name = (await get_setting(uid, SPOOF_FROM_NAME_KEY) or "").strip()
+    if not cur_name:
+        cur_name = await get_user_sender_name(uid) or "— не задано —"
     cur_subj = await get_setting(uid, SPOOF_SUBJECT_KEY) or "— не задана —"
     kb = InlineKeyboardMarkup(
         inline_keyboard=[
@@ -296,7 +299,7 @@ async def spoof_name_save(message: Message, state: FSMContext) -> None:
     name = (message.text or "").strip()
     if len(name.split()) < 2:
         return await message.answer("Минимум 2 слова (имя и фамилия).")
-    await set_user_sender_name(message.from_user.id, name)
+    await set_setting(message.from_user.id, SPOOF_FROM_NAME_KEY, name)
     await state.clear()
     await message.answer(f"✅ Имя сохранено: <b>{e(name)}</b>", parse_mode="HTML")
     kb = await settings_kb_for(message.from_user.id)
