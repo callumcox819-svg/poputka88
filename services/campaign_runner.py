@@ -57,7 +57,7 @@ async def run_campaign(
     clear_stop_campaign(campaign_id)
 
     try:
-        camp = await get_campaign(campaign_id)
+        camp = await get_campaign(campaign_id, user_id)
         if not camp:
             await bot.send_message(chat_id, "Кампания не найдена.")
             return
@@ -94,7 +94,7 @@ async def run_campaign(
         while True:
             if should_stop_campaign(campaign_id):
                 await set_campaign_status(campaign_id, "paused")
-                camp = await get_campaign(campaign_id)
+                camp = await get_campaign(campaign_id, user_id)
                 await bot.send_message(
                     chat_id,
                     f"Рассылка #{campaign_id} остановлена.\n"
@@ -102,14 +102,14 @@ async def run_campaign(
                 )
                 break
 
-            camp = await get_campaign(campaign_id)
+            camp = await get_campaign(campaign_id, user_id)
             if not camp or camp["status"] == "paused":
                 break
 
             batch = await pending_recipients(campaign_id, limit=1)
             if not batch:
                 await set_campaign_status(campaign_id, "done")
-                camp = await get_campaign(campaign_id)
+                camp = await get_campaign(campaign_id, user_id)
                 await bot.send_message(
                     chat_id,
                     f"Готово. Отправлено: {camp['sent']}, ошибок: {camp['failed']}.",

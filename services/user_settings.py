@@ -1,17 +1,15 @@
-"""Настройки пользователя key-value (как happy88 user_settings)."""
+"""Настройки пользователя key-value (per Telegram user_id)."""
 
 from __future__ import annotations
 
-import aiosqlite
-
-from database import DB_PATH
+from services.db_backend import db_connect
 
 TOGGLE_KEYS = frozenset({"smart_mode", "spoofing", "block_control"})
 SPOOF_SUBJECT_KEY = "spoof_subject"
 
 
 async def get_setting(user_id: int, key: str) -> str | None:
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with db_connect() as db:
         cur = await db.execute(
             "SELECT value FROM user_settings WHERE user_id = ? AND key = ?",
             (user_id, key),
@@ -21,7 +19,7 @@ async def get_setting(user_id: int, key: str) -> str | None:
 
 
 async def set_setting(user_id: int, key: str, value: str) -> None:
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with db_connect() as db:
         await db.execute(
             """
             INSERT INTO user_settings (user_id, key, value) VALUES (?, ?, ?)

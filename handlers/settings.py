@@ -12,7 +12,13 @@ from aiogram.fsm.state import State, StatesGroup
 from aiogram.types import CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup, Message
 
 from config import Settings
-from database import get_user_delay, get_user_sender_name, set_user_delay, set_user_sender_name
+from database import (
+    count_seller_blacklist,
+    get_user_delay,
+    get_user_sender_name,
+    set_user_delay,
+    set_user_sender_name,
+)
 from handlers.settings_accounts import render_accounts_menu
 from keyboards.main_menu import main_keyboard
 from keyboards.settings_happy import back_settings_kb, settings_menu_kb
@@ -54,11 +60,21 @@ async def settings_kb_for(user_id: int) -> InlineKeyboardMarkup:
     return settings_menu_kb(flags)
 
 
+async def _settings_header(user_id: int) -> str:
+    bl = await count_seller_blacklist(user_id)
+    return (
+        f"⚙️ <b>{SETTINGS_MENU_TEXT}</b>\n"
+        f"<i>Ваши настройки, пресеты и чёрный список (отдельно у каждого пользователя).</i>\n"
+        f"🚫 Чёрный список продавцов: <b>{bl}</b>"
+    )
+
+
 async def open_settings_menu(message: Message, state: FSMContext) -> None:
     await state.clear()
-    kb = await settings_kb_for(message.from_user.id)
+    uid = message.from_user.id
+    kb = await settings_kb_for(uid)
     await message.answer(
-        f"⚙️ <b>{SETTINGS_MENU_TEXT}</b>",
+        await _settings_header(uid),
         reply_markup=kb,
         parse_mode="HTML",
     )
@@ -68,8 +84,9 @@ async def open_settings_menu(message: Message, state: FSMContext) -> None:
 async def settings_open_cb(callback: CallbackQuery, state: FSMContext) -> None:
     await state.clear()
     await callback.answer()
-    kb = await settings_kb_for(callback.from_user.id)
-    await cq_edit_text(callback, f"⚙️ <b>{SETTINGS_MENU_TEXT}</b>", reply_markup=kb)
+    uid = callback.from_user.id
+    kb = await settings_kb_for(uid)
+    await cq_edit_text(callback, await _settings_header(uid), reply_markup=kb)
 
 
 @router.callback_query(F.data.startswith("ref_toggle:"))

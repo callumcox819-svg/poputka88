@@ -194,7 +194,7 @@ async def cmd_status(message: Message) -> None:
     if len(parts) < 2 or not parts[1].isdigit():
         await message.answer("Использование: /status <id>")
         return
-    camp = await get_campaign(int(parts[1]))
+    camp = await get_campaign(int(parts[1]), message.from_user.id)
     if not camp:
         await message.answer("Кампания не найдена.")
         return
@@ -209,7 +209,7 @@ async def cmd_status(message: Message) -> None:
 @router.callback_query(F.data.startswith("stat:"))
 async def on_stat(cb: CallbackQuery) -> None:
     cid = int(cb.data.split(":", 1)[1])
-    camp = await get_campaign(cid)
+    camp = await get_campaign(cid, cb.from_user.id)
     if not camp:
         await cb.answer("Не найдена", show_alert=True)
         return
