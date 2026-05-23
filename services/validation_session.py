@@ -16,6 +16,7 @@ from aiogram.types import FSInputFile
 
 from config import Settings
 from services.task_control import clear_stop_validation, should_stop_validation
+from services.db_errors import is_transient_db_error, validation_crash_message
 from services.void_validation_runner import (
     ValidemailWorkerContext,
     process_validation_item,
@@ -195,6 +196,7 @@ async def _worker(bot: Bot, settings: Settings, session: ValidationSession) -> N
 
         session.stop_updater.clear()
         session.updater_task = asyncio.create_task(_progress_updater(bot, session))
+        await _edit_status(bot, session, finished=False)
 
         while True:
             if session.stats.stopped or should_stop_validation(session.user_id):
@@ -207,12 +209,24 @@ async def _worker(bot: Bot, settings: Settings, session: ValidationSession) -> N
                     break
                 continue
 
-            await process_validation_item(
-                item,
-                ctx=ctx,
-                session=session,
-                settings=settings,
-            )
+            try:
+                await process_validation_item(
+                    item,
+                    ctx=ctx,
+                    session=session,
+                    settings=settings,
+                )
+            except Exception as exc:
+                if is_transient_db_error(exc):
+                    async with session.lock:
+                        session.stats.errors += 1
+                    logger.warning(
+                        "validation item skipped (DB) user_id=%s: %s",
+                        session.user_id,
+                        exc,
+                    )
+                else:
+                    raise
             session.queue.task_done()
 
             if session.stats.fatal_reason:
@@ -235,9 +249,18 @@ async def _worker(bot: Bot, settings: Settings, session: ValidationSession) -> N
                 session.stats.fatal_reason,
             )
         await session.queue.join()
-    except Exception:
+    except Exception as exc:
         logger.exception("validation worker user_id=%s", session.user_id)
-        await bot.send_message(session.chat_id, "❌ Ошибка валидации. Смотрите логи.")
+        await bot.send_message(
+            session.chat_id,
+            validation_crash_message(
+                exc,
+                processed=session.stats.processed,
+                total=session.stats.total,
+                added=session.stats.added,
+            ),
+            parse_mode="HTML",
+        )
     finally:
         _drain_validation_queue(session)
         session.stop_updater.set()
@@ -296,11 +319,14 @@ async def enqueue_void_validation(
 
     if session.worker_task is None or session.worker_task.done():
         session.worker_task = asyncio.create_task(_worker(bot, settings, session))
-        return f"🔎 В очереди <b>{len(items)}</b> объявлений (всего {session.stats.total})."
+        return (
+            f"🔎 <b>Подбор email…</b> добавлено <b>{len(items)}</b>, "
+            f"всего <b>{session.stats.total}</b> объявлений."
+        )
 
     return (
-        f"➕ Добавлено <b>{len(items)}</b> в очередь "
-        f"(всего {session.stats.total}, обработано {session.stats.processed})."
+        f"➕ В подбор <b>+{len(items)}</b> (всего {session.stats.total}, "
+        f"уже обработано {session.stats.processed})."
     )
 
 

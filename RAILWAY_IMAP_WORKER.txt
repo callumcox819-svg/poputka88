@@ -47,6 +47,8 @@
 6. Остальные переменные как были:
    BOT_TOKEN, DATABASE_URL (Reference на Postgres),
    ADMIN_IDS, VALIDEMAIL_API_KEY, …
+   DB_POOL_SIZE = 20          (на poputka88 и imap-worker, меньше connection_lost)
+   DB_POOL_MIN_SIZE = 2
 
 7. Нажми **Deploy** / **Redeploy** у poputka88.
 

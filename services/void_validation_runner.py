@@ -85,10 +85,10 @@ async def process_validation_item(
     session: ValidationSession,
     settings: Settings,
 ) -> None:
-    from database import append_emails_to_running_campaign
-    from services.validation_session import ValidationSession as VS
+    from services.db_errors import is_transient_db_error
+    from services.validation_session import ValidationSession
 
-    assert isinstance(session, VS)
+    assert isinstance(session, ValidationSession)
     stats = session.stats
 
     if stats.stopped or should_stop_validation(session.user_id):
@@ -97,6 +97,36 @@ async def process_validation_item(
 
     async with session.lock:
         stats.processed += 1
+
+    last_exc: Exception | None = None
+    for attempt in range(4):
+        try:
+            await _process_validation_item_once(
+                item, ctx=ctx, session=session, settings=settings
+            )
+            return
+        except Exception as exc:
+            last_exc = exc
+            if is_transient_db_error(exc) and attempt < 3:
+                await asyncio.sleep(0.8 * (attempt + 1))
+                continue
+            raise
+    if last_exc:
+        raise last_exc
+
+
+async def _process_validation_item_once(
+    item: dict[str, Any],
+    *,
+    ctx: ValidemailWorkerContext,
+    session: ValidationSession,
+    settings: Settings,
+) -> None:
+    from database import append_emails_to_running_campaign
+    from services.validation_session import ValidationSession as VS
+
+    assert isinstance(session, VS)
+    stats = session.stats
 
     name = seller_name_from_item(item)
     if not seller_name_eligible(name):

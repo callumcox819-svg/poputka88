@@ -5,6 +5,7 @@ SQLite (локально) или PostgreSQL (DATABASE_URL на Railway).
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import os
 import re
@@ -161,13 +162,26 @@ async def init_db_backend() -> None:
         return
     import asyncpg
 
+    min_size = max(1, int(os.getenv("DB_POOL_MIN_SIZE", "2")))
+    max_size = max(min_size, int(os.getenv("DB_POOL_SIZE", "20")))
+    acquire_timeout = float(os.getenv("DB_POOL_ACQUIRE_TIMEOUT_SEC", "30"))
+
     _pool = await asyncpg.create_pool(
         _database_url(),
-        min_size=1,
-        max_size=12,
-        command_timeout=60,
+        min_size=min_size,
+        max_size=max_size,
+        command_timeout=int(os.getenv("DB_COMMAND_TIMEOUT_SEC", "90")),
+        timeout=acquire_timeout,
+        max_inactive_connection_lifetime=float(
+            os.getenv("DB_MAX_INACTIVE_CONNECTION_SEC", "300")
+        ),
     )
-    logger.info("PostgreSQL pool ready")
+    logger.info(
+        "PostgreSQL pool ready (min=%s max=%s acquire_timeout=%ss)",
+        min_size,
+        max_size,
+        acquire_timeout,
+    )
 
 
 async def close_db_backend() -> None:
@@ -182,8 +196,30 @@ async def db_connect():
     if is_postgres():
         if _pool is None:
             await init_db_backend()
-        async with _pool.acquire() as raw:
-            yield _PgConn(raw)
+        from services.db_errors import is_transient_db_error
+
+        last_exc: Exception | None = None
+        retries = max(1, int(os.getenv("DB_CONNECT_RETRIES", "4")))
+        for attempt in range(retries):
+            try:
+                async with _pool.acquire() as raw:
+                    yield _PgConn(raw)
+                    return
+            except Exception as exc:
+                last_exc = exc
+                if not is_transient_db_error(exc) or attempt >= retries - 1:
+                    raise
+                delay = 0.6 * (attempt + 1)
+                logger.warning(
+                    "DB acquire retry %s/%s: %s (sleep %.1fs)",
+                    attempt + 1,
+                    retries,
+                    exc,
+                    delay,
+                )
+                await asyncio.sleep(delay)
+        if last_exc:
+            raise last_exc
     else:
         import aiosqlite
 
