@@ -7,3 +7,16 @@ class NewCampaign(StatesGroup):
     format_choice = State()
     encoding = State()
     recipients = State()
+
+
+class QuickAdd(StatesGroup):
+    sender_name = State()
+    accounts = State()
+
+
+class EmailValidation(StatesGroup):
+    waiting_list = State()
+
+
+class SettingsEdit(StatesGroup):
+    delay = State()

@@ -5,7 +5,7 @@ from __future__ import annotations
 import ssl
 from email.message import EmailMessage
 from email.policy import SMTP
-from typing import Literal
+from typing import Any, Literal
 
 import aiosmtplib
 
@@ -45,6 +45,14 @@ def build_message(
     return msg
 
 
+def format_from_header(account: dict[str, Any]) -> str:
+    name = (account.get("sender_name") or "").strip()
+    email = account["email"]
+    if name:
+        return f'"{name}" <{email}>'
+    return email
+
+
 async def send_one(
     settings: Settings,
     *,
@@ -54,10 +62,28 @@ async def send_one(
     is_html: bool,
     transfer: TransferEncoding = TransferEncoding.AUTO,
     reply_to: str | None = None,
+    account: dict[str, Any] | None = None,
+    use_tls: bool | None = None,
 ) -> EncodingName:
     enc = resolve_encoding(transfer, body, is_html=is_html)
+
+    if account:
+        mail_from = format_from_header(account)
+        host = account["smtp_host"]
+        port = int(account["smtp_port"])
+        user = account["email"]
+        password = account["password"]
+        tls_default = port != 25
+    else:
+        mail_from = settings.smtp_from
+        host = settings.smtp_host
+        port = settings.smtp_port
+        user = settings.smtp_user
+        password = settings.smtp_password
+        tls_default = settings.smtp_use_tls
+
     message = build_message(
-        mail_from=settings.smtp_from,
+        mail_from=mail_from,
         to_addr=to_addr,
         subject=subject,
         body=body,
@@ -66,17 +92,18 @@ async def send_one(
         reply_to=reply_to,
     )
 
+    tls_on = tls_default if use_tls is None else use_tls
     tls_ctx = ssl.create_default_context()
-    use_tls = settings.smtp_use_tls and settings.smtp_port == 465
+    use_ssl = tls_on and port == 465
 
     await aiosmtplib.send(
         message,
-        hostname=settings.smtp_host,
-        port=settings.smtp_port,
-        username=settings.smtp_user or None,
-        password=settings.smtp_password or None,
-        start_tls=settings.smtp_use_tls and not use_tls,
-        use_tls=use_tls,
+        hostname=host,
+        port=port,
+        username=user or None,
+        password=password or None,
+        start_tls=tls_on and not use_ssl,
+        use_tls=use_ssl,
         tls_context=tls_ctx,
     )
     return enc

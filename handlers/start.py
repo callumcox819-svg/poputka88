@@ -1,19 +1,23 @@
 from aiogram import Router
-from aiogram.filters import Command
+from aiogram.filters import Command, CommandStart
 from aiogram.types import Message
+
+from keyboards.main_menu import main_keyboard
 
 router = Router()
 
+WELCOME = (
+    "Poputka88 — бот массовой рассылки.\n\n"
+    "Команды:\n"
+    "/start — меню\n"
+    "/send — запустить рассылку\n"
+    "/stop — остановить рассылку\n"
+    "/stopcheck — остановить проверку почт\n"
+    "/imap_check — входящие по IMAP\n\n"
+    "Или используйте кнопки ниже."
+)
 
-@router.message(Command("start"))
+
+@router.message(CommandStart())
 async def cmd_start(message: Message) -> None:
-    await message.answer(
-        "Mass Mailer Bot — рассылка по SMTP с правильной MIME-кодировкой.\n\n"
-        "/new — новая кампания\n"
-        "/status <id> — прогресс\n\n"
-        "Кодировки:\n"
-        "• 7bit — идеально для чистого ASCII\n"
-        "• quoted-printable — лучше для UTF-8 и HTML\n"
-        "• base64 — тяжёлый контент\n"
-        "• auto — подбор автоматически"
-    )
+    await message.answer(WELCOME, reply_markup=main_keyboard())

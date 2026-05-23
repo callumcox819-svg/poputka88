@@ -7,11 +7,11 @@ from aiogram.types import CallbackQuery, Message
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 
 from config import Settings
-from database import add_recipients, create_campaign, get_campaign
+from database import add_recipients, create_campaign, get_campaign, get_running_campaign
 from handlers.states import NewCampaign
+from keyboards.main_menu import MENU_BUTTONS, main_keyboard
 from services.campaign_runner import run_campaign
-from services.encoding import TransferEncoding, can_use_7bit, recommend_encoding
-from utils.email_list import parse_emails
+from services.encoding import can_use_7bit, recommend_encoding
 
 router = Router()
 
@@ -34,22 +34,52 @@ def _format_keyboard():
     return b.as_markup()
 
 
-@router.message(Command("new"))
-async def cmd_new(message: Message, state: FSMContext) -> None:
+async def begin_new_campaign(message: Message, state: FSMContext) -> None:
     await state.clear()
     await state.set_state(NewCampaign.subject)
-    await message.answer("Тема письма:")
+    await message.answer(
+        "Новая рассылка.\nТема письма:",
+        reply_markup=main_keyboard(),
+    )
+
+
+async def launch_campaign(
+    message: Message,
+    settings: Settings,
+    bot,
+    campaign_id: int,
+    *,
+    user_id: int | None = None,
+) -> None:
+    uid = user_id if user_id is not None else message.from_user.id
+    running = await get_running_campaign(uid)
+    if running:
+        await message.answer(f"Уже идёт рассылка #{running['id']}. /stop — остановить.")
+        return
+    asyncio.create_task(
+        run_campaign(bot, settings, campaign_id, message.chat.id, uid)
+    )
+    await message.answer(f"Кампания #{campaign_id} запущена.")
+
+
+@router.message(Command("new"))
+async def cmd_new(message: Message, state: FSMContext) -> None:
+    await begin_new_campaign(message, state)
 
 
 @router.message(NewCampaign.subject)
 async def on_subject(message: Message, state: FSMContext) -> None:
+    if message.text in MENU_BUTTONS:
+        return
     await state.update_data(subject=message.text or "")
     await state.set_state(NewCampaign.body)
-    await message.answer("Текст письма (можно HTML позже):")
+    await message.answer("Текст письма:")
 
 
 @router.message(NewCampaign.body)
 async def on_body(message: Message, state: FSMContext) -> None:
+    if message.text in MENU_BUTTONS:
+        return
     body = message.text or message.caption or ""
     await state.update_data(body=body)
     await state.set_state(NewCampaign.format_choice)
@@ -69,11 +99,7 @@ async def on_format(cb: CallbackQuery, state: FSMContext) -> None:
     body = data.get("body", "")
     rec = recommend_encoding(body, is_html=is_html)
     await cb.message.edit_text(
-        f"Кодировка передачи (Content-Transfer-Encoding):\n"
-        f"Рекомендация: {rec}\n\n"
-        "7bit — максимум совместимости для ASCII.\n"
-        "quoted-printable — лучше для UTF-8/HTML.\n"
-        "base64 — тяжёлый Unicode.",
+        f"Кодировка (Content-Transfer-Encoding):\nРекомендация: {rec}",
         reply_markup=_encoding_keyboard(),
     )
     await cb.answer()
@@ -85,17 +111,18 @@ async def on_encoding(cb: CallbackQuery, state: FSMContext) -> None:
     await state.update_data(encoding=enc)
     await state.set_state(NewCampaign.recipients)
     await cb.message.edit_text(
-        "Пришли список email — по одному на строку или через запятую.\n"
-        "Можно отправить .txt файл."
+        "Список получателей — по строке или .txt файл."
     )
     await cb.answer()
 
 
 @router.message(NewCampaign.recipients, F.document)
-async def on_recipients_file(message: Message, state: FSMContext, settings: Settings, bot) -> None:
+async def on_recipients_file(
+    message: Message, state: FSMContext, settings: Settings, bot
+) -> None:
     doc = message.document
     if not doc or not doc.file_name or not doc.file_name.endswith(".txt"):
-        await message.answer("Нужен .txt файл со списком email.")
+        await message.answer("Нужен .txt файл.")
         return
     file = await bot.get_file(doc.file_id)
     buf = await bot.download_file(file.file_path)
@@ -104,7 +131,11 @@ async def on_recipients_file(message: Message, state: FSMContext, settings: Sett
 
 
 @router.message(NewCampaign.recipients)
-async def on_recipients_text(message: Message, state: FSMContext, settings: Settings, bot) -> None:
+async def on_recipients_text(
+    message: Message, state: FSMContext, settings: Settings, bot
+) -> None:
+    if message.text in MENU_BUTTONS:
+        return
     await _finish_recipients(message, state, settings, bot, message.text or "")
 
 
@@ -115,14 +146,14 @@ async def _finish_recipients(
     bot,
     text: str,
 ) -> None:
+    from utils.email_list import parse_emails
+
     emails = parse_emails(text)
     if not emails:
-        await message.answer("Не найдено ни одного валидного email.")
+        await message.answer("Не найдено валидных email.")
         return
     if len(emails) > settings.max_recipients:
-        await message.answer(
-            f"Слишком много адресов ({len(emails)}). Лимит: {settings.max_recipients}."
-        )
+        await message.answer(f"Лимит: {settings.max_recipients} адресов.")
         return
 
     data = await state.get_data()
@@ -142,10 +173,8 @@ async def _finish_recipients(
     b.adjust(2)
 
     await message.answer(
-        f"Кампания #{cid} создана.\n"
-        f"Получателей: {n}\n"
-        f"Кодировка: {data.get('encoding', 'auto')}\n"
-        f"Формат: {'HTML' if data.get('is_html') else 'text'}",
+        f"Кампания #{cid} готова.\nПолучателей: {n}\n"
+        "Нажмите «Запустить» или /send",
         reply_markup=b.as_markup(),
     )
 
@@ -153,16 +182,17 @@ async def _finish_recipients(
 @router.callback_query(F.data.startswith("run:"))
 async def on_run(cb: CallbackQuery, settings: Settings, bot) -> None:
     cid = int(cb.data.split(":", 1)[1])
-    asyncio.create_task(run_campaign(bot, settings, cid, cb.message.chat.id))
-    await cb.answer("Рассылка запущена")
-    await cb.message.answer(f"Кампания #{cid} запущена. /status {cid} — прогресс.")
+    await launch_campaign(
+        cb.message, settings, bot, cid, user_id=cb.from_user.id
+    )
+    await cb.answer("Запущено")
 
 
 @router.message(Command("status"))
 async def cmd_status(message: Message) -> None:
     parts = (message.text or "").split()
     if len(parts) < 2 or not parts[1].isdigit():
-        await message.answer("Использование: /status <id кампании>")
+        await message.answer("Использование: /status <id>")
         return
     camp = await get_campaign(int(parts[1]))
     if not camp:
@@ -172,8 +202,7 @@ async def cmd_status(message: Message) -> None:
         f"#{camp['id']} — {camp['status']}\n"
         f"Всего: {camp['total']}\n"
         f"Отправлено: {camp['sent']}\n"
-        f"Ошибок: {camp['failed']}\n"
-        f"Кодировка: {camp['encoding']}"
+        f"Ошибок: {camp['failed']}"
     )
 
 
