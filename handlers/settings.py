@@ -17,6 +17,7 @@ from aiogram.types import CallbackQuery, InlineKeyboardButton, InlineKeyboardMar
 from config import Settings
 from database import (
     count_seller_blacklist,
+    get_mailing_sender_display,
     get_user_delay,
     get_user_sender_name,
     set_user_delay,
@@ -247,10 +248,9 @@ async def timings_set(message: Message, state: FSMContext) -> None:
 async def spoof_name_menu(callback: CallbackQuery, state: FSMContext) -> None:
     await state.clear()
     uid = callback.from_user.id
-    cur_name = (await get_setting(uid, SPOOF_FROM_NAME_KEY) or "").strip()
-    if not cur_name:
-        cur_name = await get_user_sender_name(uid) or "— не задано —"
+    cur_name = (await get_setting(uid, SPOOF_FROM_NAME_KEY) or "").strip() or "— не задано —"
     cur_subj = await get_setting(uid, SPOOF_SUBJECT_KEY) or "— не задана —"
+    mailing_from = await get_mailing_sender_display(uid) or "—"
     kb = InlineKeyboardMarkup(
         inline_keyboard=[
             [InlineKeyboardButton(text="✅ Установить имя", callback_data="spoof_name_set")],
@@ -271,7 +271,8 @@ async def spoof_name_menu(callback: CallbackQuery, state: FSMContext) -> None:
             "При <b>HTML</b> строго из этой секции:\n"
             "• <b>From</b> и <code>{{NICK}}</code> — только «Имя» выше\n"
             "• <b>Subject</b> — только «Установить тему»\n"
-            "Тема входящего письма и имя SMTP-аккаунта <b>не</b> используются.\n"
+            "Тема входящего и имя из «добавления почты» <b>не</b> используются.\n"
+            f"Для обычной рассылки (не HTML) From: <i>{e(mailing_from)}</i>\n"
             "HTML — только через прокси, с GAG-ссылкой в <code>{{LINK}}</code>.\n"
         ),
         reply_markup=kb,
