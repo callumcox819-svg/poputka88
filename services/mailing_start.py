@@ -56,7 +56,6 @@ async def start_mailing_from_validated_db(
     if paused:
         pending_n = await count_pending_recipients(int(paused["id"]))
         if pending_n > 0:
-            await set_campaign_status(int(paused["id"]), "running")
             sent_before = int(paused.get("sent") or 0)
             total = int(paused.get("total") or 0)
             await message.answer(

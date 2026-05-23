@@ -80,42 +80,34 @@ async def _on_startup(bot: Bot) -> None:
 
 
     imap_accs = await list_imap_poll_accounts()
-
-    logger.info(
-
-        "IMAP: %s ящик(ов) в фоновом опросе каждые %ss",
-
-        len(imap_accs),
-
-        POLL_SEC,
-
-    )
-
     if not imap_accs:
-
         logger.warning(
-
             "IMAP: нет ящиков для опроса — добавьте SMTP с паролем в ⚡ Быстрое добавление"
-
         )
+    await _start_imap_on_bot_if_needed(bot, mailbox_count=len(imap_accs))
 
-    await _start_imap_on_bot_if_needed(bot)
 
-
-async def _start_imap_on_bot_if_needed(bot: Bot) -> None:
+async def _start_imap_on_bot_if_needed(bot: Bot, *, mailbox_count: int = 0) -> None:
     """IMAP на боте только если нет отдельного imap-worker (см. RAILWAY_IMAP_WORKER.txt)."""
     if not _env_truthy("ENABLE_INCOMING_MAIL"):
         logger.warning(
-            "IMAP в bot.py ВЫКЛЮЧЕН. Входящие: отдельный сервис "
-            "python imap_worker.py + ENABLE_INCOMING_MAIL=1"
+            "IMAP в bot.py ВЫКЛЮЧЕН (%s ящик(ов) в БД). Входящие: отдельный сервис "
+            "python imap_worker.py + ENABLE_INCOMING_MAIL=1",
+            mailbox_count,
         )
         return
     if _env_truthy("IMAP_DEDICATED_WORKER"):
         logger.info(
-            "IMAP в bot.py отключён (IMAP_DEDICATED_WORKER=1) — опрос на сервисе imap-worker"
+            "IMAP в bot.py отключён (IMAP_DEDICATED_WORKER=1) — %s ящик(ов) на imap-worker",
+            mailbox_count,
         )
         return
 
+    logger.info(
+        "IMAP: %s ящик(ов) в фоновом опросе на боте каждые %ss",
+        mailbox_count,
+        POLL_SEC,
+    )
     delay = int(os.getenv("INCOMING_MAIL_START_DELAY_SEC", "30"))
 
     async def _delayed() -> None:
