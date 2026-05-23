@@ -206,6 +206,65 @@ def fetch_new_mails_sync(
     )
 
 
+def _uid_key(mailbox: str, uid: str | int) -> str:
+    tag = "all" if mailbox == GMAIL_ALL_MAIL else "in"
+    return f"{tag}:{uid}"
+
+
+def fetch_account_mails_sync(
+    *,
+    host: str,
+    port: int,
+    email_addr: str,
+    password: str,
+    last_uid: int | None,
+    catch_up_recent: int = 0,
+    is_gmail: bool = False,
+) -> tuple[list[MailRow], int | None]:
+    """
+    Все активные ящики: Gmail = «Вся почта» (last_uid) + INBOX (догон),
+    остальные = INBOX. UID в БД с префиксом all:/in: (разные папки).
+    """
+    recent = max(int(catch_up_recent or 0), CATCH_UP_RECENT_UIDS)
+    primary = GMAIL_ALL_MAIL if is_gmail else "INBOX"
+
+    rows, max_uid = fetch_inbox_mails_sync(
+        host=host,
+        port=port,
+        email_addr=email_addr,
+        password=password,
+        last_uid=last_uid,
+        catch_up_recent=recent,
+        mailbox=primary,
+    )
+    out: list[MailRow] = [
+        (_uid_key(primary, r[0]), r[1], r[2], r[3], r[4], r[5], r[6]) for r in rows
+    ]
+    seen_msg = {r[6] for r in out if r[6]}
+
+    if is_gmail:
+        rows_in, _ = fetch_inbox_mails_sync(
+            host=host,
+            port=port,
+            email_addr=email_addr,
+            password=password,
+            last_uid=None,
+            catch_up_recent=recent,
+            mailbox="INBOX",
+        )
+        for r in rows_in:
+            mid = (r[6] or "").strip()
+            if mid and mid in seen_msg:
+                continue
+            if mid:
+                seen_msg.add(mid)
+            out.append(
+                (_uid_key("INBOX", r[0]), r[1], r[2], r[3], r[4], r[5], r[6])
+            )
+
+    return out, max_uid
+
+
 def is_own_outgoing_copy(from_email: str, account_email: str, subject: str) -> bool:
     """
     Копия вашего исходящего в ящике (From = ваш email, не ответ продавца).

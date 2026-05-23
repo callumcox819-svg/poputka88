@@ -1321,6 +1321,34 @@ async def set_imap_last_uid(account_id: int, uid: int) -> None:
         await db.commit()
 
 
+async def get_incoming_mail_id_by_uid(account_id: int, imap_uid: str) -> int | None:
+    async with db_connect() as db:
+        cur = await db.execute(
+            "SELECT id FROM incoming_mails WHERE account_id = ? AND imap_uid = ?",
+            (account_id, str(imap_uid)),
+        )
+        row = await cur.fetchone()
+        return int(row[0]) if row else None
+
+
+async def list_incoming_pending_notify(*, limit: int = 80) -> list[dict]:
+    """Письма в БД без карточки в Telegram (повторная отправка)."""
+    async with db_connect() as db:
+        cur = await db.execute(
+            """
+            SELECT id, user_id, account_id, from_email, from_name, subject, body,
+                   product_title, service_label, photo_url, offer_price, lead_id,
+                   account_email
+            FROM incoming_mails
+            WHERE tg_message_id IS NULL
+            ORDER BY id DESC
+            LIMIT ?
+            """,
+            (int(limit),),
+        )
+        return [r.as_dict() for r in await cur.fetchall()]
+
+
 async def incoming_mail_exists(account_id: int, imap_uid: str) -> bool:
     async with db_connect() as db:
         cur = await db.execute(

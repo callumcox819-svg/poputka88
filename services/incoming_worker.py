@@ -12,16 +12,18 @@ from aiogram.exceptions import TelegramBadRequest
 from database import (
     count_incoming_from_sender,
     get_imap_last_uid,
+    get_incoming_mail,
+    get_incoming_mail_id_by_uid,
     get_incoming_thread_reply_message_id,
-    incoming_mail_exists,
     insert_incoming_mail,
     list_imap_poll_accounts,
+    list_incoming_pending_notify,
     set_imap_last_uid,
     set_incoming_mail_tg_message,
 )
 from services.imap_accounts import imap_mailbox_for_account, is_gmail_account
 from services.imap_fetch import (
-    fetch_new_mails_sync,
+    fetch_account_mails_sync,
     is_google_system_mail,
     is_own_outgoing_copy,
     service_label_from_body,
@@ -34,6 +36,8 @@ logger = logging.getLogger(__name__)
 
 _worker_task: asyncio.Task | None = None
 POLL_SEC = float(os.getenv("INCOMING_POLL_SEC", "20"))
+# Догон последних UID на каждом ящике (все пользователи, все enabled-аккаунты)
+CATCH_UP_EVERY_POLL = int(os.getenv("IMAP_CATCH_UP_RECENT", "35"))
 
 
 def _format_price(price: str, currency: str = "") -> str:
@@ -151,21 +155,19 @@ async def _process_account(
         return 0
 
     mailbox = imap_mailbox_for_account(acc)
-    recent = catch_up_recent
-    if recent <= 0 and is_gmail_account(acc):
-        recent = 25
+    recent = max(catch_up_recent, CATCH_UP_EVERY_POLL)
 
     last_uid = await get_imap_last_uid(acc_id)
     try:
         mails, new_last = await asyncio.to_thread(
-            fetch_new_mails_sync,
+            fetch_account_mails_sync,
             host=host,
             port=port,
             email_addr=email_addr,
             password=password,
             last_uid=last_uid,
             catch_up_recent=recent,
-            mailbox=mailbox,
+            is_gmail=is_gmail_account(acc),
         )
     except Exception as exc:
         logger.error("IMAP acc_id=%s %s: %s", acc_id, email_addr, exc)
@@ -196,32 +198,38 @@ async def _process_account(
         if is_google_system_mail(from_email, from_name, subject):
             skipped_system += 1
             continue
-        if await incoming_mail_exists(acc_id, uid):
-            skipped_exists += 1
-            continue
 
         prior = await count_incoming_from_sender(acc_id, from_email)
         is_first = prior == 0
-
         meta = await _lead_meta(user_id, from_email, body)
-        mail_id = await insert_incoming_mail(
-            user_id,
-            acc_id,
-            imap_uid=uid,
-            message_id=message_id,
-            account_email=email_addr,
-            from_email=from_email,
-            from_name=from_name,
-            subject=subject,
-            body=body,
-            lead_id=meta.get("lead_id"),
-            product_title=meta.get("product_title", ""),
-            service_label=meta.get("service_label", ""),
-            photo_url=meta.get("photo_url", ""),
-            offer_price=meta.get("offer_price", ""),
-        )
-        if not mail_id:
-            continue
+
+        mail_id = await get_incoming_mail_id_by_uid(acc_id, uid) or 0
+        if mail_id:
+            existing = await get_incoming_mail(mail_id, user_id)
+            if existing and existing.get("tg_message_id"):
+                skipped_exists += 1
+                continue
+        else:
+            mail_id = await insert_incoming_mail(
+                user_id,
+                acc_id,
+                imap_uid=uid,
+                message_id=message_id,
+                account_email=email_addr,
+                from_email=from_email,
+                from_name=from_name,
+                subject=subject,
+                body=body,
+                lead_id=meta.get("lead_id"),
+                product_title=meta.get("product_title", ""),
+                service_label=meta.get("service_label", ""),
+                photo_url=meta.get("photo_url", ""),
+                offer_price=meta.get("offer_price", ""),
+            )
+            if not mail_id:
+                mail_id = await get_incoming_mail_id_by_uid(acc_id, uid) or 0
+            if not mail_id:
+                continue
 
         try:
             await _notify_incoming(
@@ -269,7 +277,7 @@ async def poll_incoming_for_user(
     accounts = [
         a for a in await list_imap_poll_accounts() if int(a.get("user_id") or 0) == uid
     ]
-    recent = 40 if catch_up else 0
+    recent = max(40, CATCH_UP_EVERY_POLL) if catch_up else CATCH_UP_EVERY_POLL
     total = 0
     for acc in accounts:
         total += await _process_account(bot, acc, catch_up_recent=recent)
@@ -284,6 +292,43 @@ async def poll_incoming_for_user(
     return len(accounts), total
 
 
+async def _flush_pending_notifications(bot: Bot) -> int:
+    """Карточки, которые попали в БД, но не ушли в Telegram."""
+    pending = await list_incoming_pending_notify(limit=80)
+    sent = 0
+    for row in pending:
+        uid = int(row["user_id"])
+        acc_id = int(row["account_id"])
+        mail_id = int(row["id"])
+        from_email = (row.get("from_email") or "").strip()
+        prior = await count_incoming_from_sender(acc_id, from_email)
+        is_first = prior <= 1
+        meta = {
+            "lead_id": row.get("lead_id"),
+            "product_title": row.get("product_title") or "",
+            "photo_url": row.get("photo_url") or "",
+            "offer_price": row.get("offer_price") or "",
+            "service_label": row.get("service_label") or "",
+        }
+        try:
+            await _notify_incoming(
+                bot,
+                chat_id=uid,
+                user_id=uid,
+                account_id=acc_id,
+                inbox_label="",
+                mail_id=mail_id,
+                is_first_from_sender=is_first,
+                meta=meta,
+            )
+            sent += 1
+        except Exception:
+            logger.exception("retry notify mail_id=%s", mail_id)
+    if sent:
+        logger.info("IMAP retry notify: %s card(s)", sent)
+    return sent
+
+
 async def _poll_loop(bot: Bot) -> None:
     while True:
         try:
@@ -291,6 +336,7 @@ async def _poll_loop(bot: Bot) -> None:
             new_cards = 0
             for acc in accounts:
                 new_cards += await _process_account(bot, acc)
+            new_cards += await _flush_pending_notifications(bot)
             if accounts and new_cards:
                 logger.info(
                     "IMAP poll: %s account(s), %s new card(s)",
@@ -312,8 +358,19 @@ def start_incoming_mail_worker(bot: Bot) -> None:
 
     async def _log_accounts() -> None:
         try:
-            n = len(await list_imap_poll_accounts())
-            logger.info("Incoming IMAP worker started (poll=%ss, accounts=%s)", POLL_SEC, n)
+            accs = await list_imap_poll_accounts()
+            by_user: dict[int, int] = {}
+            for a in accs:
+                uid = int(a.get("user_id") or 0)
+                by_user[uid] = by_user.get(uid, 0) + 1
+            logger.info(
+                "Incoming IMAP worker started (poll=%ss, total_mailboxes=%s, users=%s)",
+                POLL_SEC,
+                len(accs),
+                len(by_user),
+            )
+            for uid, cnt in sorted(by_user.items()):
+                logger.info("IMAP user_id=%s: %s active mailbox(es)", uid, cnt)
         except Exception:
             logger.info("Incoming IMAP worker started (poll=%ss)", POLL_SEC)
 
