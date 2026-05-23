@@ -21,9 +21,8 @@ from database import (
     set_imap_last_uid,
     set_incoming_mail_tg_message,
 )
-from services.imap_accounts import imap_mailbox_for_account, is_gmail_account
 from services.imap_fetch import (
-    fetch_account_mails_sync,
+    fetch_new_mails_sync,
     is_google_system_mail,
     is_own_outgoing_copy,
     service_label_from_body,
@@ -36,8 +35,6 @@ logger = logging.getLogger(__name__)
 
 _worker_task: asyncio.Task | None = None
 POLL_SEC = float(os.getenv("INCOMING_POLL_SEC", "20"))
-# Догон последних UID на каждом ящике (все пользователи, все enabled-аккаунты)
-CATCH_UP_EVERY_POLL = int(os.getenv("IMAP_CATCH_UP_RECENT", "60"))
 
 
 def _format_price(price: str, currency: str = "") -> str:
@@ -154,20 +151,15 @@ async def _process_account(
     if not host or not email_addr or not password:
         return 0
 
-    mailbox = imap_mailbox_for_account(acc)
-    recent = max(catch_up_recent, CATCH_UP_EVERY_POLL)
-
     last_uid = await get_imap_last_uid(acc_id)
     try:
         mails, new_last = await asyncio.to_thread(
-            fetch_account_mails_sync,
+            fetch_new_mails_sync,
             host=host,
             port=port,
             email_addr=email_addr,
             password=password,
             last_uid=last_uid,
-            catch_up_recent=recent,
-            is_gmail=is_gmail_account(acc),
         )
     except Exception as exc:
         logger.error("IMAP acc_id=%s %s: %s", acc_id, email_addr, exc)
@@ -262,10 +254,9 @@ async def _process_account(
 
     if mails and not notified:
         logger.info(
-            "IMAP acc=%s [%s] fetched=%s notified=0 "
+            "IMAP acc=%s INBOX fetched=%s notified=0 "
             "(exists=%s own=%s system=%s empty=%s)",
             email_addr,
-            mailbox,
             len(mails),
             skipped_exists,
             skipped_own,
@@ -284,7 +275,7 @@ async def poll_incoming_for_user(
     accounts = [
         a for a in await list_imap_poll_accounts() if int(a.get("user_id") or 0) == uid
     ]
-    recent = max(40, CATCH_UP_EVERY_POLL) if catch_up else CATCH_UP_EVERY_POLL
+    recent = 0
     total = 0
     for acc in accounts:
         total += await _process_account(bot, acc, catch_up_recent=recent)

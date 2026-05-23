@@ -14,12 +14,7 @@ def is_gmail_account(acc: dict[str, Any]) -> bool:
 
 
 def imap_mailbox_for_account(acc: dict[str, Any]) -> str:
-    """
-    Gmail: «Вся почта» — ответы часто не в INBOX (Промо/обновления).
-    Остальные: INBOX.
-    """
-    if is_gmail_account(acc):
-        return "[Gmail]/All Mail"
+    """Как happy88 — только INBOX."""
     return "INBOX"
 
 

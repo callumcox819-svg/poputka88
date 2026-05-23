@@ -1,21 +1,16 @@
-"""IMAP: входящие на ящики из бота (внешняя почта B → ящик A в боте)."""
+"""
+IMAP INBOX — как happy88: UID > imap_last_uid, первый опрос = baseline (без старых писем).
+"""
 
 from __future__ import annotations
 
 import email
 import imaplib
-import logging
-import os
 import re
 from email.header import decode_header
 from email.utils import parseaddr
 
-logger = logging.getLogger(__name__)
-
-# Сколько последних UID смотреть на каждый опрос (ответ B→A не должен теряться в хвосте)
-BRUTE_LOOKBACK = int(os.getenv("IMAP_BRUTE_LOOKBACK", "60"))
-MAX_FETCH_PER_POLL = int(os.getenv("IMAP_MAX_FETCH", "60"))
-GMAIL_ALL_MAIL = "[Gmail]/All Mail"
+DEFAULT_MAX_PER_ACCOUNT = 15
 
 # uid, from_email, from_name, subject, date, body, message_id
 MailRow = tuple[str, str, str, str, str, str, str]
@@ -60,135 +55,16 @@ def _extract_text_from_msg(msg: email.message.Message) -> str:
         return payload.decode("utf-8", errors="ignore").strip()
 
 
-def _select_mailbox_with_fallback(
-    host: str,
-    port: int,
-    email_addr: str,
-    password: str,
-    mailbox: str,
-) -> tuple[imaplib.IMAP4, str]:
-    """Gmail All Mail → при ошибке INBOX."""
+def _imap_connect_inbox(host: str, port: int, email_addr: str, password: str) -> imaplib.IMAP4:
     if int(port) == 993:
         m = imaplib.IMAP4_SSL(host, int(port), timeout=45)
     else:
         m = imaplib.IMAP4(host, int(port), timeout=45)
     m.login(email_addr, password)
-    candidates = [mailbox] if mailbox == "INBOX" else [mailbox, "INBOX"]
-    for box in candidates:
-        typ, _ = m.select(box, readonly=True)
-        if typ == "OK":
-            if box != mailbox:
-                logger.warning(
-                    "IMAP %s: fallback INBOX (не открылось %r)", email_addr, mailbox
-                )
-            return m, box
-    raise RuntimeError(f"IMAP cannot select {mailbox!r} or INBOX")
-
-
-def _parse_uid_search(data: list) -> list[int]:
-    if not data or not data[0]:
-        return []
-    return [int(x) for x in data[0].split() if str(x).isdigit()]
-
-
-def _fetch_uids(m: imaplib.IMAP4, uids: list[int]) -> list[MailRow]:
-    out: list[MailRow] = []
-    for uid in uids:
-        typ2, msg_data = m.uid("fetch", str(uid), "(RFC822)")
-        if typ2 != "OK" or not msg_data:
-            continue
-        raw = None
-        for item in msg_data:
-            if isinstance(item, tuple) and len(item) > 1 and item[1]:
-                raw = item[1]
-                break
-        if not raw:
-            continue
-        msg = email.message_from_bytes(raw)
-        from_raw = _decode_mime_words(msg.get("From", ""))
-        subject = _decode_mime_words(msg.get("Subject", ""))
-        date_str = msg.get("Date", "") or ""
-        name, addr = parseaddr(from_raw)
-        from_email = (addr or "").strip().lower()
-        from_name = (name or "").strip()
-        body = _extract_text_from_msg(msg)
-        message_id = (msg.get("Message-ID") or "").strip()
-        out.append(
-            (str(uid), from_email, from_name, subject, date_str, body, message_id)
-        )
-    return out
-
-
-def fetch_inbox_mails_sync(
-    *,
-    host: str,
-    port: int,
-    email_addr: str,
-    password: str,
-    last_uid: int | None,
-    catch_up_recent: int = 0,
-    mailbox: str = "INBOX",
-) -> tuple[list[MailRow], int | None]:
-    """
-    Входящие на ящик, добавленный в бот (не «тестовая» почта).
-
-    - UID > last_uid
-    - UNSEEN
-    - catch_up_recent: последние N UID (догон /imap_check)
-  """
-    m: imaplib.IMAP4 | None = None
-    selected_box = mailbox
-    try:
-        m, selected_box = _select_mailbox_with_fallback(
-            host, port, email_addr, password, mailbox
-        )
-
-        typ, data = m.uid("search", None, "ALL")
-        if typ != "OK" or not data or not data[0]:
-            return [], last_uid
-
-        inbox_uids = _parse_uid_search(data)
-        if not inbox_uids:
-            return [], last_uid
-
-        max_uid = max(inbox_uids)
-        uids_to_fetch: set[int] = set()
-        lookback = max(BRUTE_LOOKBACK, int(catch_up_recent or 0))
-
-        # Всегда: последние N писем в папке (сценарий: A в боте, ответ с внешней B→A)
-        uids_to_fetch.update(sorted(inbox_uids)[-lookback:])
-
-        if last_uid is not None:
-            uids_to_fetch.update(u for u in inbox_uids if u > int(last_uid))
-
-        typ_u, data_u = m.uid("search", None, "UNSEEN")
-        if typ_u == "OK":
-            uids_to_fetch.update(_parse_uid_search(data_u))
-
-        # Письма именно на этот ящик (Gmail/другие)
-        try:
-            typ_t, data_t = m.uid("search", None, f'(TO "{email_addr}")')
-            if typ_t == "OK" and data_t and data_t[0]:
-                uids_to_fetch.update(_parse_uid_search(data_t))
-        except Exception:
-            pass
-
-        if not uids_to_fetch:
-            return [], int(max_uid)
-
-        ordered = sorted(uids_to_fetch)[-MAX_FETCH_PER_POLL:]
-        rows = _fetch_uids(m, ordered)
-        if rows and selected_box == GMAIL_ALL_MAIL:
-            logger.debug(
-                "IMAP %s [%s]: fetched %s msg(s)", email_addr, selected_box, len(rows)
-            )
-        return rows, int(max_uid)
-    finally:
-        if m is not None:
-            try:
-                m.logout()
-            except Exception:
-                pass
+    typ, _ = m.select("INBOX")
+    if typ != "OK":
+        raise RuntimeError("IMAP select INBOX failed")
+    return m
 
 
 def fetch_new_mails_sync(
@@ -198,84 +74,66 @@ def fetch_new_mails_sync(
     email_addr: str,
     password: str,
     last_uid: int | None,
-    catch_up_recent: int = 0,
-    mailbox: str = "INBOX",
-) -> tuple[list[MailRow], int | None]:
-    return fetch_inbox_mails_sync(
-        host=host,
-        port=port,
-        email_addr=email_addr,
-        password=password,
-        last_uid=last_uid,
-        catch_up_recent=catch_up_recent,
-        mailbox=mailbox,
-    )
-
-
-def _uid_key(mailbox: str, uid: str | int) -> str:
-    tag = "all" if mailbox == GMAIL_ALL_MAIL else "in"
-    return f"{tag}:{uid}"
-
-
-def fetch_account_mails_sync(
-    *,
-    host: str,
-    port: int,
-    email_addr: str,
-    password: str,
-    last_uid: int | None,
-    catch_up_recent: int = 0,
-    is_gmail: bool = False,
 ) -> tuple[list[MailRow], int | None]:
     """
-    Все активные ящики: Gmail = «Вся почта» (last_uid) + INBOX (догон),
-    остальные = INBOX. UID в БД с префиксом all:/in: (разные папки).
+    INBOX: новые UID > last_uid.
+    Первый опрос (last_uid is None): не шлём старые письма, last_uid = max(uid).
     """
-    recent = max(int(catch_up_recent or 0), BRUTE_LOOKBACK)
-    primary = GMAIL_ALL_MAIL if is_gmail else "INBOX"
+    m: imaplib.IMAP4 | None = None
+    try:
+        m = _imap_connect_inbox(host, port, email_addr, password)
+        typ, data = m.uid("search", None, "ALL")
+        if typ != "OK" or not data or not data[0]:
+            return [], last_uid
 
-    rows, max_uid = fetch_inbox_mails_sync(
-        host=host,
-        port=port,
-        email_addr=email_addr,
-        password=password,
-        last_uid=last_uid,
-        catch_up_recent=recent,
-        mailbox=primary,
-    )
-    out: list[MailRow] = [
-        (_uid_key(primary, r[0]), r[1], r[2], r[3], r[4], r[5], r[6]) for r in rows
-    ]
-    seen_msg = {r[6] for r in out if r[6]}
+        inbox_uids = [int(x) for x in data[0].split() if str(x).isdigit()]
+        if not inbox_uids:
+            return [], last_uid
 
-    if is_gmail:
-        rows_in, _ = fetch_inbox_mails_sync(
-            host=host,
-            port=port,
-            email_addr=email_addr,
-            password=password,
-            last_uid=None,
-            catch_up_recent=recent,
-            mailbox="INBOX",
-        )
-        for r in rows_in:
-            mid = (r[6] or "").strip()
-            if mid and mid in seen_msg:
+        max_uid = max(inbox_uids)
+
+        if last_uid is None:
+            return [], int(max_uid)
+
+        new_uids = sorted(u for u in inbox_uids if u > int(last_uid))
+        if not new_uids:
+            return [], int(max_uid)
+
+        new_uids = new_uids[-DEFAULT_MAX_PER_ACCOUNT:]
+        out: list[MailRow] = []
+        for uid in new_uids:
+            typ2, msg_data = m.uid("fetch", str(uid), "(RFC822)")
+            if typ2 != "OK" or not msg_data:
                 continue
-            if mid:
-                seen_msg.add(mid)
+            raw = None
+            for item in msg_data:
+                if isinstance(item, tuple) and len(item) > 1 and item[1]:
+                    raw = item[1]
+                    break
+            if not raw:
+                continue
+            msg = email.message_from_bytes(raw)
+            from_raw = _decode_mime_words(msg.get("From", ""))
+            subject = _decode_mime_words(msg.get("Subject", ""))
+            date_str = msg.get("Date", "") or ""
+            name, addr = parseaddr(from_raw)
+            from_email = (addr or "").strip().lower()
+            from_name = (name or "").strip()
+            body = _extract_text_from_msg(msg)
+            message_id = (msg.get("Message-ID") or "").strip()
             out.append(
-                (_uid_key("INBOX", r[0]), r[1], r[2], r[3], r[4], r[5], r[6])
+                (str(uid), from_email, from_name, subject, date_str, body, message_id)
             )
-
-    return out, max_uid
+        return out, int(max_uid)
+    finally:
+        if m is not None:
+            try:
+                m.logout()
+            except Exception:
+                pass
 
 
 def is_own_outgoing_copy(from_email: str, account_email: str, subject: str) -> bool:
-    """
-    Пропуск только своего исходящего (A→внешняя B), не входящего B→A.
-    From == ящик A в боте и тема без Re:/Fwd:.
-    """
     if (from_email or "").strip().lower() != (account_email or "").strip().lower():
         return False
     sl = (subject or "").strip().lower()
@@ -330,3 +188,44 @@ def service_label_from_body(body: str) -> str:
     if "facebook.com" in bl or re.search(r"\bfacebook\b", bl):
         return "Facebook.com"
     return ""
+
+
+# Совместимость со старыми вызовами
+def fetch_inbox_mails_sync(
+    *,
+    host: str,
+    port: int,
+    email_addr: str,
+    password: str,
+    last_uid: int | None,
+    catch_up_recent: int = 0,
+    mailbox: str = "INBOX",
+) -> tuple[list[MailRow], int | None]:
+    del catch_up_recent, mailbox
+    return fetch_new_mails_sync(
+        host=host,
+        port=port,
+        email_addr=email_addr,
+        password=password,
+        last_uid=last_uid,
+    )
+
+
+def fetch_account_mails_sync(
+    *,
+    host: str,
+    port: int,
+    email_addr: str,
+    password: str,
+    last_uid: int | None,
+    catch_up_recent: int = 0,
+    is_gmail: bool = False,
+) -> tuple[list[MailRow], int | None]:
+    del catch_up_recent, is_gmail
+    return fetch_new_mails_sync(
+        host=host,
+        port=port,
+        email_addr=email_addr,
+        password=password,
+        last_uid=last_uid,
+    )

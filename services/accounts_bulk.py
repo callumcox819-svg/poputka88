@@ -44,6 +44,9 @@ def check_imap_credentials(email: str, password: str) -> Tuple[bool, Optional[st
     try:
         with imaplib.IMAP4_SSL(host) as imap:
             imap.login(email, password)
+            typ, _ = imap.select("INBOX")
+            if typ != "OK":
+                return False, provider, "IMAP select INBOX failed"
         return True, provider, None
     except Exception as exc:  # noqa: BLE001
         logger.warning("IMAP login failed for %s: %s", email, exc)

@@ -16,7 +16,7 @@ def _imap_connect(host: str, port: int, email: str, password: str) -> imaplib.IM
     else:
         conn = imaplib.IMAP4(host, int(port), timeout=45)
     conn.login(email, password)
-    typ, _ = conn.select("INBOX", readonly=True)
+    typ, _ = conn.select("INBOX")
     if typ != "OK":
         raise RuntimeError("IMAP select INBOX failed")
     return conn
