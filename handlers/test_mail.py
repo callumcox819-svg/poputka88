@@ -14,7 +14,13 @@ from aiogram.types import CallbackQuery, InlineKeyboardButton, InlineKeyboardMar
 
 from config import Settings
 from database import get_user_sender_name, list_smtp_mailing_accounts
-from services.mail_outbound import NoLiveProxyError, send_mail
+from services.incoming_worker import poll_incoming_for_user
+from services.mail_outbound import (
+    NoLiveProxyError,
+    live_proxy_count,
+    send_mail,
+    user_has_proxies,
+)
 from services.offer_text import apply_offer_to_text
 from services.presets import pick_random_smart_preset
 from services.test_mail_fixtures import (
@@ -87,7 +93,52 @@ async def _sender_account_emails(user_id: int) -> set[str]:
     return {_canon_email(a.get("email") or "") for a in accs if a.get("email")}
 
 
-def _menu_text(emails: List[str], *, sender_name: str | None) -> str:
+async def _proxy_hint(user_id: int) -> str:
+    if not await user_has_proxies(user_id):
+        return (
+            "📤 <b>Тест = plain text</b> — без прокси (как обычная рассылка без HTML).\n"
+            "🌐 Для <b>HTML</b> нужны SOCKS5 в «Прокси».\n"
+        )
+    live = await live_proxy_count(user_id)
+    if live < 1:
+        return (
+            "⚠️ Прокси в настройках есть, но <b>нет живых</b> — HTML не уйдёт.\n"
+            "Тест plain text попробует отправить напрямую.\n"
+        )
+    return (
+        f"🌐 Прокси: <b>{live}</b> живых — plain/HTML через SOCKS5 при отправке.\n"
+        "Тест сейчас: <b>plain text</b> (не HTML).\n"
+    )
+
+
+async def _imap_hint(user_id: int) -> str:
+    from database import list_imap_poll_accounts
+
+    accs = await list_smtp_mailing_accounts(user_id, with_secrets=False)
+    poll = [
+        a
+        for a in await list_imap_poll_accounts()
+        if int(a.get("user_id") or 0) == int(user_id)
+    ]
+    if not accs:
+        return "📬 IMAP: нет SMTP-ящиков.\n"
+    if not poll:
+        return (
+            "📬 IMAP: ящики есть, но <b>нет imap_host</b> — входящие в бот не придут.\n"
+            "Проверьте ящик в настройках или /imap_check.\n"
+        )
+    return (
+        f"📬 IMAP: опрос <b>{len(poll)}</b> ящ. каждые ~25 с + после тест-отправки.\n"
+    )
+
+
+def _menu_text(
+    emails: List[str],
+    *,
+    sender_name: str | None,
+    proxy_line: str,
+    imap_line: str,
+) -> str:
     fixtures = load_test_fixtures()
     fx_lines = ""
     if fixtures:
@@ -105,20 +156,22 @@ def _menu_text(emails: List[str], *, sender_name: str | None) -> str:
     if not emails:
         return (
             "🧪 <b>Тест маил</b>\n\n"
-            f"{from_line}\n"
+            f"{from_line}{proxy_line}{imap_line}\n"
             "Тема = <code>OFFER</code> (название товара из фикстуры).\n"
             f"{fx_lines}\n"
-            "Список получателей пуст — «➕ Добавить email»."
+            "Список получателей пуст — «➕ Добавить email».\n"
+            "Ответ в бот: реальный IMAP или «📥 Симуляция ответа»."
         )
     lines = "\n".join(
         f"{i + 1}. <code>{e(em)}</code>" for i, em in enumerate(emails)
     )
     return (
         "🧪 <b>Тест маил</b>\n\n"
-        f"{from_line}\n"
+        f"{from_line}{proxy_line}{imap_line}\n"
         "▶️ Отправка: тема = название товара (OFFER), текст — умный пресет.\n"
         f"{fx_lines}\n"
-        f"<b>Получатели ({len(emails)}):</b>\n{lines}"
+        f"<b>Получатели ({len(emails)}):</b>\n{lines}\n"
+        "Ответ в Gmail → карточка в боте только через IMAP (тот же ящик, что слал письмо)."
     )
 
 
@@ -187,7 +240,12 @@ def _sim_menu_kb() -> InlineKeyboardMarkup:
 async def _show_menu(message: Message, user_id: int, *, edit: bool = False) -> None:
     emails = await _load_recipients(user_id)
     sn = await get_user_sender_name(user_id)
-    text = _menu_text(emails, sender_name=sn)
+    text = _menu_text(
+        emails,
+        sender_name=sn,
+        proxy_line=await _proxy_hint(user_id),
+        imap_line=await _imap_hint(user_id),
+    )
     kb = _menu_kb(emails)
     if edit:
         try:
@@ -274,9 +332,29 @@ async def _run_test_batch(
         except Exception:
             pass
 
+    imap_extra = ""
+    if ok_n > 0:
+        try:
+            acc_n, mail_n = await poll_incoming_for_user(bot, user_id)
+            imap_extra = (
+                f"\n\n📬 <b>IMAP сейчас:</b> {acc_n} ящ., новых карточек: {mail_n}"
+            )
+            if acc_n == 0:
+                imap_extra += (
+                    "\n⚠️ Нет ящиков с IMAP — добавьте imap в SMTP или /imap_check."
+                )
+            elif mail_n == 0:
+                imap_extra += (
+                    "\n<i>Новых UID нет (ответ ещё не пришёл или уже был до старта бота). "
+                    "Подождите ~25 с или «📥 Симуляция».</i>"
+                )
+        except Exception:
+            imap_extra = "\n\n📬 IMAP: не удалось опросить (см. логи Railway)."
+
     summary = (
         f"<b>Тест завершён</b> — OK: {ok_n}, ошибок: {fail_n}\n\n"
         + "\n".join(lines)
+        + imap_extra
     )
     try:
         await status_message.edit_text(summary, parse_mode="HTML")
@@ -392,6 +470,12 @@ async def cb_tm_send(callback: CallbackQuery, state: FSMContext, settings: Setti
 
     if bg_is_running(uid, "test_mail"):
         return await callback.answer("⏳ Тест уже идёт…", show_alert=True)
+
+    if await user_has_proxies(uid) and await live_proxy_count(uid) < 1:
+        return await callback.answer(
+            "Нет живых прокси (HTML не уйдёт). Проверьте 🌐 Прокси.",
+            show_alert=True,
+        )
 
     await state.clear()
     await callback.answer("⏳ Отправляю…")

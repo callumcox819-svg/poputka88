@@ -135,7 +135,8 @@ async def _notify_incoming(
             logger.warning("send_photo failed mail_id=%s url=%s", mail_id, photo_url[:80])
 
 
-async def _process_account(bot: Bot, acc: dict) -> None:
+async def _process_account(bot: Bot, acc: dict) -> int:
+    """Опрос одного ящика. Возвращает число новых карточек в Telegram."""
     acc_id = int(acc["id"])
     user_id = int(acc["user_id"])
     host = (acc.get("imap_host") or "").strip()
@@ -143,7 +144,7 @@ async def _process_account(bot: Bot, acc: dict) -> None:
     email_addr = (acc.get("email") or "").strip()
     password = acc.get("password") or ""
     if not host or not email_addr or not password:
-        return
+        return 0
 
     last_uid = await get_imap_last_uid(acc_id)
     try:
@@ -157,16 +158,17 @@ async def _process_account(bot: Bot, acc: dict) -> None:
         )
     except Exception as exc:
         logger.warning("IMAP acc_id=%s %s: %s", acc_id, email_addr, exc)
-        return
+        return 0
 
     if new_last is not None:
         await set_imap_last_uid(acc_id, int(new_last))
 
     if not mails:
-        return
+        return 0
 
     inbox_label = (acc.get("sender_name") or "").strip()
     chat_id = user_id
+    notified = 0
 
     for row in mails:
         uid, from_email, from_name, subject, _date, body, message_id = row
@@ -211,16 +213,52 @@ async def _process_account(bot: Bot, acc: dict) -> None:
                 is_first_from_sender=is_first,
                 meta=meta,
             )
+            notified += 1
+            logger.info(
+                "IMAP new mail user_id=%s acc=%s from=%s mail_id=%s",
+                user_id,
+                email_addr,
+                from_email,
+                mail_id,
+            )
         except Exception:
             logger.exception("notify incoming mail_id=%s", mail_id)
+
+    return notified
+
+
+async def poll_incoming_for_user(bot: Bot, user_id: int) -> tuple[int, int]:
+    """Немедленный опрос IMAP только для ящиков user_id. (accounts, new_cards)."""
+    uid = int(user_id)
+    accounts = [
+        a for a in await list_imap_poll_accounts() if int(a.get("user_id") or 0) == uid
+    ]
+    total = 0
+    for acc in accounts:
+        total += await _process_account(bot, acc)
+    if accounts:
+        logger.info(
+            "IMAP manual poll user_id=%s: %s account(s), %s new card(s)",
+            uid,
+            len(accounts),
+            total,
+        )
+    return len(accounts), total
 
 
 async def _poll_loop(bot: Bot) -> None:
     while True:
         try:
             accounts = await list_imap_poll_accounts()
+            new_cards = 0
             for acc in accounts:
-                await _process_account(bot, acc)
+                new_cards += await _process_account(bot, acc)
+            if accounts and new_cards:
+                logger.info(
+                    "IMAP poll: %s account(s), %s new card(s)",
+                    len(accounts),
+                    new_cards,
+                )
         except asyncio.CancelledError:
             raise
         except Exception:
