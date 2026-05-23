@@ -14,6 +14,9 @@ MAIN_MENU_TEXTS: frozenset[str] = frozenset(
         "/stopsend",
         "📊 Статус рассылки",
         "🧪 Тест маил",
+        "👑 Админ-панель",
+        "🔥 Админ-панель",
+        "/admin",
     }
 )
 
@@ -34,6 +37,12 @@ def is_main_menu_text(text: str | None) -> bool:
         return True
     tl = t.casefold().replace("\ufe0f", "")
     return "настройки" in tl
+
+
+async def main_menu_kb_for(telegram_id: int) -> ReplyKeyboardMarkup:
+    from services.bot_roles import user_is_admin
+
+    return main_keyboard(show_admin=await user_is_admin(telegram_id))
 
 
 def main_keyboard(*, show_admin: bool = False) -> ReplyKeyboardMarkup:

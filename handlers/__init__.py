@@ -13,10 +13,12 @@ from handlers.status import router as status_router
 from handlers.json_incoming import router as json_incoming_router
 from handlers.incoming_mail import router as incoming_mail_router
 from handlers.test_mail import router as test_mail_router
+from handlers.admin_panel import router as admin_panel_router
 
 
 def setup_routers() -> Router:
     root = Router()
+    root.include_router(admin_panel_router)
     root.include_router(menu_router)
     root.include_router(start_router)
     root.include_router(status_router)

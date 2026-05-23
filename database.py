@@ -16,10 +16,10 @@ async def init_db() -> None:
         await init_postgres_schema()
         await migrate_sqlite_to_postgres_if_needed()
         await migrate_json_blobs_to_postgres()
-        return
-    DB_PATH.parent.mkdir(parents=True, exist_ok=True)
-    async with db_connect() as db:
-        await db.executescript(
+    else:
+        DB_PATH.parent.mkdir(parents=True, exist_ok=True)
+        async with db_connect() as db:
+            await db.executescript(
             """
             CREATE TABLE IF NOT EXISTS campaigns (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -160,9 +160,9 @@ async def init_db() -> None:
                 PRIMARY KEY (user_id, blob_key)
             );
             """
-        )
-        await db.commit()
-        for stmt in (
+            )
+            await db.commit()
+            for stmt in (
             "ALTER TABLE smtp_accounts ADD COLUMN provider TEXT NOT NULL DEFAULT ''",
             "ALTER TABLE user_prefs ADD COLUMN sender_name TEXT NOT NULL DEFAULT ''",
             "ALTER TABLE smtp_accounts ADD COLUMN smtp_enabled INTEGER NOT NULL DEFAULT 1",
@@ -182,12 +182,16 @@ async def init_db() -> None:
             "ALTER TABLE incoming_mails ADD COLUMN offer_price TEXT NOT NULL DEFAULT ''",
             "ALTER TABLE incoming_mails ADD COLUMN tg_chat_id INTEGER",
             "ALTER TABLE incoming_mails ADD COLUMN tg_message_id INTEGER",
-        ):
-            try:
-                await db.execute(stmt)
-                await db.commit()
-            except Exception:
-                pass
+            ):
+                try:
+                    await db.execute(stmt)
+                    await db.commit()
+                except Exception:
+                    pass
+
+    from services.bot_users import ensure_bot_users_table
+
+    await ensure_bot_users_table()
 
 
 async def create_campaign(
