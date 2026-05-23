@@ -184,7 +184,6 @@ def fetch_new_mails_sync(
     email_addr: str,
     password: str,
     last_uid: int | None,
-    *,
     bootstrap_unseen: bool = True,
     catch_up_recent: int = 0,
 ) -> tuple[list[MailRow], int | None]:
