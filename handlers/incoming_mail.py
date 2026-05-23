@@ -6,15 +6,18 @@ import logging
 
 from aiogram import F, Router
 from aiogram.fsm.context import FSMContext
-from aiogram.types import CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup
+from aiogram.types import CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup, Message
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 
 from config import Settings
 from database import get_incoming_mail, save_incoming_gag_link
 from handlers.states import MailReply
 from services.gag_link import create_gag_link_for_incoming
-from services.gag_user import GagNotConfiguredError
+from services.gag_link_card import send_generated_link_card
+from services.gag_user import GagNotConfiguredError, load_gag_profile
 from services.html_incoming_send import send_incoming_html
+from services.incoming_reply_send import send_incoming_text_reply
+from services.presets import TemplateItem, load_templates
 from services.reply_notify import (
     ReplyNotifyCtx,
     html_attachment_filename,
@@ -35,11 +38,55 @@ REPLY_CHOICE_TEXT = (
 
 
 def _kb_reply_choice(mail_id: int) -> InlineKeyboardMarkup:
-    b = InlineKeyboardBuilder()
-    b.button(text="🧩 Отправить HTML", callback_data=f"mail_reply_mode:html:{mail_id}")
-    b.button(text="🚫 Отмена", callback_data=f"mail_reply_mode:cancel:{mail_id}")
-    b.adjust(1)
-    return b.as_markup()
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(
+                    text="📄 Отправить пресет",
+                    callback_data=f"mail_reply_mode:preset:{mail_id}",
+                ),
+                InlineKeyboardButton(
+                    text="🧩 Отправить HTML",
+                    callback_data=f"mail_reply_mode:html:{mail_id}",
+                ),
+            ],
+            [
+                InlineKeyboardButton(
+                    text="✏️ Ручной ввод",
+                    callback_data=f"mail_reply_mode:manual:{mail_id}",
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    text="🚫 Отмена",
+                    callback_data=f"mail_reply_mode:cancel:{mail_id}",
+                )
+            ],
+        ]
+    )
+
+
+def _kb_preset_pick(items: list[TemplateItem], mail_id: int) -> InlineKeyboardMarkup:
+    rows: list[list[InlineKeyboardButton]] = []
+    for i, t in enumerate(items[:30]):
+        label = (t.title or f"Пресет #{i + 1}").strip()[:40]
+        rows.append(
+            [
+                InlineKeyboardButton(
+                    text=label,
+                    callback_data=f"mail_tmpl_send:{i}:{mail_id}",
+                )
+            ]
+        )
+    rows.append(
+        [
+            InlineKeyboardButton(
+                text="⬅️ Назад",
+                callback_data=f"mail_reply_mode:back:{mail_id}",
+            )
+        ]
+    )
+    return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
 def _kb_html_pick(mail_id: int) -> InlineKeyboardMarkup:
@@ -87,30 +134,6 @@ async def cb_goo_link_stub(callback: CallbackQuery) -> None:
 @router.callback_query(F.data.startswith("mail_reply_stub:"))
 async def cb_mail_reply_stub(callback: CallbackQuery) -> None:
     await callback.answer("Дождитесь нового входящего письма.", show_alert=True)
-
-
-@router.callback_query(F.data.startswith("mail_html_menu:"))
-async def cb_mail_html_menu(callback: CallbackQuery) -> None:
-    try:
-        mail_id = int((callback.data or "").split(":", 1)[1])
-    except Exception:
-        return await callback.answer("Неверные данные", show_alert=True)
-
-    uid = callback.from_user.id
-    mail = await get_incoming_mail(mail_id, uid)
-    if not mail:
-        return await callback.answer("Письмо не найдено", show_alert=True)
-    if not (mail.get("generated_link") or "").strip():
-        return await callback.answer(
-            "Сначала нажмите «🔗 Создать ссылку»", show_alert=True
-        )
-
-    await callback.message.answer(
-        "🧩 <b>HTML-шаблон</b>\nСсылка GAG подставится в кнопку письма.",
-        parse_mode="HTML",
-        reply_markup=_kb_html_pick(mail_id),
-    )
-    await callback.answer()
 
 
 @router.callback_query(F.data.startswith("mail_reply:"))
@@ -161,6 +184,62 @@ async def cb_mail_reply_mode(callback: CallbackQuery, state: FSMContext) -> None
         await state.clear()
         return await callback.answer("Отменено")
 
+    if mode == "back":
+        await state.set_state(MailReply.waiting_choice)
+        try:
+            await callback.message.edit_text(
+                REPLY_CHOICE_TEXT,
+                parse_mode="HTML",
+                reply_markup=_kb_reply_choice(mail_id),
+            )
+        except Exception:
+            ui = await callback.message.answer(
+                REPLY_CHOICE_TEXT,
+                parse_mode="HTML",
+                reply_markup=_kb_reply_choice(mail_id),
+            )
+            await state.update_data(ui_message_id=ui.message_id)
+        return await callback.answer()
+
+    if mode == "preset":
+        items = await load_templates(uid)
+        if not items:
+            return await callback.answer(
+                "Нет шаблонов. Добавьте в ⚡ Шаблоны", show_alert=True
+            )
+        try:
+            await callback.message.edit_text(
+                "🧾 <b>Ваши шаблоны</b>\n\nНажмите пресет для отправки:",
+                parse_mode="HTML",
+                reply_markup=_kb_preset_pick(items, mail_id),
+            )
+        except Exception:
+            ui = await callback.message.answer(
+                "🧾 <b>Ваши шаблоны</b>\n\nНажмите пресет для отправки:",
+                parse_mode="HTML",
+                reply_markup=_kb_preset_pick(items, mail_id),
+            )
+            await state.update_data(ui_message_id=ui.message_id)
+        return await callback.answer()
+
+    if mode == "manual":
+        await state.set_state(MailReply.waiting_text)
+        await state.update_data(mail_id=mail_id)
+        try:
+            await callback.message.edit_text(
+                "✏️ <b>Ручной ответ</b>\n\nВведите текст следующим сообщением.\n"
+                "«-» — отмена.",
+                parse_mode="HTML",
+            )
+        except Exception:
+            ui = await callback.message.answer(
+                "✏️ <b>Ручной ответ</b>\n\nВведите текст следующим сообщением.\n"
+                "«-» — отмена.",
+                parse_mode="HTML",
+            )
+            await state.update_data(ui_message_id=ui.message_id)
+        return await callback.answer()
+
     if mode == "html":
         mail = await get_incoming_mail(mail_id, uid)
         if not mail:
@@ -170,15 +249,22 @@ async def cb_mail_reply_mode(callback: CallbackQuery, state: FSMContext) -> None
                 "Сначала «🔗 Создать ссылку» — без неё HTML не отправляется.",
                 show_alert=True,
             )
+        to_em = (mail.get("from_email") or "").strip()
+        html_text = (
+            "🧩 <b>HTML</b>\n\n"
+            f"Кому: <code>{to_em or '—'}</code>\n"
+            f"От ящика: <code>{(mail.get('account_email') or '—')}</code>\n\n"
+            "Выберите шаблон:"
+        )
         try:
             await callback.message.edit_text(
-                "🧩 <b>Выберите шаблон HTML</b>",
+                html_text,
                 parse_mode="HTML",
                 reply_markup=_kb_html_pick(mail_id),
             )
         except Exception:
             ui = await callback.message.answer(
-                "🧩 <b>Выберите шаблон HTML</b>",
+                html_text,
                 parse_mode="HTML",
                 reply_markup=_kb_html_pick(mail_id),
             )
@@ -191,10 +277,28 @@ async def cb_mail_reply_mode(callback: CallbackQuery, state: FSMContext) -> None
 @router.callback_query(F.data.startswith("mail_reply_html:"))
 async def cb_mail_reply_html(callback: CallbackQuery, settings: Settings, state: FSMContext) -> None:
     try:
-        _, kind, mail_id_s = (callback.data or "").split(":", 2)
-        mail_id = int(mail_id_s)
+        parts = (callback.data or "").split(":")
+        kind = parts[2]
+        mail_id = int(parts[3])
     except Exception:
         return await callback.answer("Неверные данные", show_alert=True)
+
+    if kind == "back":
+        uid = callback.from_user.id
+        await state.set_state(MailReply.waiting_choice)
+        try:
+            await callback.message.edit_text(
+                REPLY_CHOICE_TEXT,
+                parse_mode="HTML",
+                reply_markup=_kb_reply_choice(mail_id),
+            )
+        except Exception:
+            await callback.message.answer(
+                REPLY_CHOICE_TEXT,
+                parse_mode="HTML",
+                reply_markup=_kb_reply_choice(mail_id),
+            )
+        return await callback.answer()
 
     uid = callback.from_user.id
     mail = await get_incoming_mail(mail_id, uid)
@@ -254,6 +358,108 @@ async def cb_mail_reply_html(callback: CallbackQuery, settings: Settings, state:
 
     if not bg_start(uid, "smtp", _job()):
         await callback.answer("⏳ Отправка уже идёт…", show_alert=True)
+
+
+@router.callback_query(F.data.startswith("mail_tmpl_send:"))
+async def cb_mail_tmpl_send(
+    callback: CallbackQuery, settings: Settings, state: FSMContext
+) -> None:
+    try:
+        _, idx_s, mail_id_s = (callback.data or "").split(":", 2)
+        idx = int(idx_s)
+        mail_id = int(mail_id_s)
+    except Exception:
+        return await callback.answer("Неверные данные", show_alert=True)
+
+    uid = callback.from_user.id
+    items = await load_templates(uid)
+    if idx < 0 or idx >= len(items):
+        return await callback.answer("Пресет не найден", show_alert=True)
+
+    if bg_is_running(uid, "smtp"):
+        return await callback.answer("⏳ Отправка уже идёт…", show_alert=True)
+
+    mail = await get_incoming_mail(mail_id, uid)
+    if not mail:
+        return await callback.answer("Письмо не найдено", show_alert=True)
+
+    await callback.answer("⏳ Отправляю пресет…", show_alert=False)
+    msg = callback.message
+    bot = callback.bot
+    data = await state.get_data()
+    anchor = int(
+        data.get("anchor_message_id") or mail.get("tg_message_id") or msg.message_id
+    )
+    cleanup: list[int] = []
+    ui_id = data.get("ui_message_id")
+    if ui_id:
+        cleanup.append(int(ui_id))
+
+    body = items[idx].text
+
+    async def _job() -> None:
+        ok, err, ctx = await send_incoming_text_reply(
+            settings, uid, mail_id=mail_id, body=body
+        )
+        if ok and ctx:
+            ctx.anchor_message_id = anchor
+            ctx.cleanup_message_ids = cleanup
+            await notify_reply_sent(bot, msg.chat.id, ctx)
+        else:
+            await bot.send_message(
+                msg.chat.id,
+                f"❌ {err or 'Ошибка'}",
+                parse_mode="HTML",
+                reply_to_message_id=anchor,
+            )
+        await state.clear()
+
+    if not bg_start(uid, "smtp", _job()):
+        await callback.answer("⏳ Отправка уже идёт…", show_alert=True)
+
+
+@router.message(MailReply.waiting_text)
+async def mail_reply_manual_text(
+    message: Message, state: FSMContext, settings: Settings
+) -> None:
+    text = (message.text or "").strip()
+    if text in {"-", "cancel"}:
+        await state.clear()
+        return await message.answer("Отменено.")
+
+    uid = message.from_user.id
+    data = await state.get_data()
+    mail_id = int(data.get("mail_id") or 0)
+    if not mail_id:
+        await state.clear()
+        return await message.answer("❌ Нет письма. «Написать ещё» с карточки.")
+
+    if bg_is_running(uid, "smtp"):
+        return await message.answer("⏳ Отправка уже идёт…")
+
+    mail = await get_incoming_mail(mail_id, uid)
+    anchor = int(
+        data.get("anchor_message_id") or (mail or {}).get("tg_message_id") or 0
+    )
+    cleanup: list[int] = []
+    ui_id = data.get("ui_message_id")
+    if ui_id:
+        cleanup.append(int(ui_id))
+
+    async def _job() -> None:
+        ok, err, ctx = await send_incoming_text_reply(
+            settings, uid, mail_id=mail_id, body=text
+        )
+        if ok and ctx:
+            ctx.anchor_message_id = anchor
+            ctx.cleanup_message_ids = cleanup
+            await notify_reply_sent(message.bot, message.chat.id, ctx)
+        else:
+            await message.answer(f"❌ {err or 'Ошибка'}")
+        await state.clear()
+
+    if not bg_start(uid, "smtp", _job()):
+        await message.answer("⏳ Отправка уже идёт…")
 
 
 @router.callback_query(F.data.startswith("mail_translate:"))
@@ -343,6 +549,7 @@ async def cb_goo_mail(callback: CallbackQuery) -> None:
                 contact_email=contact,
                 lead_id=mail.get("lead_id"),
                 incoming_mail_id=mail_id,
+                subject=(mail.get("subject") or ""),
             )
         except GagNotConfiguredError as exc:
             await bot.send_message(
@@ -367,7 +574,12 @@ async def cb_goo_mail(callback: CallbackQuery) -> None:
         mail2 = await get_incoming_mail(mail_id, uid)
         if not mail2:
             return
+        link = (mail2.get("generated_link") or "").strip()
+        if not link:
+            return
+
         text, kb = build_card_from_mail_row(mail2)
+        anchor = int(msg.message_id)
         try:
             await msg.edit_text(
                 text,
@@ -376,14 +588,20 @@ async def cb_goo_mail(callback: CallbackQuery) -> None:
                 disable_web_page_preview=True,
             )
         except Exception:
-            await bot.send_message(
-                msg.chat.id,
-                text,
-                reply_markup=kb,
-                parse_mode="HTML",
-                reply_to_message_id=msg.message_id,
-                disable_web_page_preview=True,
-            )
+            pass
+
+        profile = await load_gag_profile(uid)
+        await send_generated_link_card(
+            bot,
+            msg.chat.id,
+            offer_title=(mail2.get("product_title") or "").strip(),
+            offer_price=(mail2.get("offer_price") or "").strip(),
+            photo_url=(mail2.get("photo_url") or "").strip(),
+            profile_title=profile.title,
+            service_label=(mail2.get("service_label") or "").strip(),
+            link=link,
+            anchor_message_id=anchor,
+        )
 
     if not bg_start(uid, "gag_link", _job()):
         await callback.answer("⏳ Ссылка уже создаётся…", show_alert=True)

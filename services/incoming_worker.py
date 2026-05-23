@@ -127,10 +127,16 @@ async def _notify_incoming(
         pass
 
     photo_url = (meta.get("photo_url") or "").strip()
-    if is_first_from_sender and photo_url:
-        cap = "📷 Фото товара (первый ответ)"
-        if meta.get("offer_price"):
-            cap += f"\n💰 Цена: {meta['offer_price']} 💰"
+    if photo_url:
+        title = (meta.get("product_title") or "").strip()
+        cap = "📷 Фото товара"
+        if is_first_from_sender:
+            cap = "📷 Фото товара (первый ответ)"
+        if title:
+            cap = f"📌 {title}\n{cap}"
+        price = (meta.get("offer_price") or "").strip()
+        if price:
+            cap += f"\n💰 Цена: {price} 💰"
         try:
             await bot.send_photo(
                 chat_id=chat_id,

@@ -16,4 +16,5 @@ class QuickAdd(StatesGroup):
 
 class MailReply(StatesGroup):
     waiting_choice = State()
+    waiting_text = State()
 

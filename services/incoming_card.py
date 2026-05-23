@@ -73,6 +73,7 @@ def render_mail_text(
     link_id: str | None = None,
     service_label: str | None = None,
     product_title: str | None = None,
+    offer_price: str | None = None,
     translation: str | None = None,
 ) -> str:
     shown = ensure_multiline_for_expandable(clean_mail_body_for_card((body or "").strip()))
@@ -85,6 +86,9 @@ def render_mail_text(
         extra += f"<b>Сервис:</b> {service_html(service_label)}\n"
     if product_title:
         extra += f"<b>Товар:</b> <code>{e(product_title)}</code>\n"
+    price = (offer_price or "").strip()
+    if price:
+        extra += f"<b>Цена:</b> <code>{e(price)}</code>\n"
     if extra:
         extra = "\n" + extra
 
@@ -121,7 +125,6 @@ def build_incoming_kb(
     imap_uid: str,
     *,
     mail_id: int | None = None,
-    has_gag_link: bool = False,
 ) -> InlineKeyboardMarkup:
     translate_cb = (
         f"mail_translate:{mail_id}" if mail_id else f"mail_translate_stub:{account_id}:{imap_uid}"
@@ -137,15 +140,6 @@ def build_incoming_kb(
         [InlineKeyboardButton(text="🔗 Создать ссылку", callback_data=link_cb)],
         [InlineKeyboardButton(text="📝 Написать ещё", callback_data=reply_cb)],
     ]
-    if mail_id and has_gag_link:
-        rows.append(
-            [
-                InlineKeyboardButton(
-                    text="🧩 HTML (GO/PUSH/…)",
-                    callback_data=f"mail_html_menu:{mail_id}",
-                )
-            ]
-        )
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
@@ -167,12 +161,12 @@ def build_card_from_mail_row(
         link_id=link_id,
         service_label=(mail.get("service_label") or "").strip() or None,
         product_title=(mail.get("product_title") or "").strip() or None,
+        offer_price=(mail.get("offer_price") or "").strip() or None,
         translation=translation,
     )
     kb = build_incoming_kb(
         int(mail["account_id"]),
         str(mail.get("imap_uid") or ""),
         mail_id=int(mail["id"]) if mail.get("id") else None,
-        has_gag_link=bool(gen),
     )
     return text, kb
