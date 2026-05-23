@@ -10,10 +10,19 @@ from aiogram.types import CallbackQuery, InlineKeyboardButton, InlineKeyboardMar
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 
 from config import Settings
-from database import get_incoming_mail, save_incoming_gag_link
-from handlers.states import MailReply
+from database import (
+    get_incoming_mail,
+    get_validated_lead_by_id,
+    save_incoming_gag_link,
+    update_incoming_mail_lead_snapshot,
+)
+from handlers.states import LeadPrice, MailReply
 from services.gag_link import create_gag_link_for_incoming
-from services.gag_link_card import send_generated_link_card
+from services.gag_link_card import (
+    build_link_card_caption,
+    build_link_card_keyboard,
+    send_generated_link_card,
+)
 from services.gag_user import GagNotConfiguredError, load_gag_profile
 from services.html_incoming_send import send_incoming_html
 from services.incoming_reply_send import send_incoming_text_reply
@@ -590,6 +599,12 @@ async def cb_goo_mail(callback: CallbackQuery) -> None:
             pass
 
         profile = await load_gag_profile(uid)
+        item_link = ""
+        lead_id = mail2.get("lead_id")
+        if lead_id:
+            lead = await get_validated_lead_by_id(uid, int(lead_id))
+            if lead:
+                item_link = (lead.get("item_link") or "").strip()
         await send_generated_link_card(
             bot,
             msg.chat.id,
@@ -598,9 +613,153 @@ async def cb_goo_mail(callback: CallbackQuery) -> None:
             photo_url=(mail2.get("photo_url") or "").strip(),
             profile_title=profile.title,
             service_label=(mail2.get("service_label") or "").strip(),
+            item_link=item_link,
             link=link,
             anchor_message_id=anchor,
+            lead_id=int(lead_id) if lead_id else None,
         )
 
     if not bg_start(uid, "gag_link", _job()):
         await callback.answer("⏳ Ссылка уже создаётся…", show_alert=True)
+
+
+@router.callback_query(F.data.startswith("lead_price:"))
+async def cb_lead_price(callback: CallbackQuery, state: FSMContext) -> None:
+    try:
+        lead_id = int((callback.data or "").split(":", 1)[1])
+    except Exception:
+        return await callback.answer("Неверный ID", show_alert=True)
+
+    uid = callback.from_user.id
+    lead = await get_validated_lead_by_id(uid, lead_id)
+    if not lead:
+        return await callback.answer("Лид не найден", show_alert=True)
+
+    anchor = None
+    if callback.message and callback.message.reply_to_message:
+        anchor = callback.message.reply_to_message.message_id
+
+    await state.set_state(LeadPrice.waiting_price)
+    await state.update_data(
+        lead_id=lead_id,
+        link_card_message_id=callback.message.message_id if callback.message else None,
+        anchor_message_id=anchor,
+    )
+    current = (lead.get("item_price") or "").strip() or "—"
+    await callback.message.answer(
+        "💶 <b>Цена</b>\n\n"
+        f"Текущая: <code>{e(current)}</code>\n\n"
+        "Отправьте новую цену (например <code>500</code> или <code>65.00 CHF</code>).\n"
+        "GAG-ссылка пересоздастся и обновится в карточке.\n\n"
+        "«-» — отмена.",
+        parse_mode="HTML",
+    )
+    await callback.answer()
+
+
+@router.message(LeadPrice.waiting_price)
+async def lead_price_set(message: Message, state: FSMContext) -> None:
+    text = (message.text or "").strip()
+    if text == "-":
+        await state.clear()
+        return await message.answer("Отменено.")
+
+    if not text:
+        return await message.answer("Введите цену или «-» для отмены.")
+
+    uid = message.from_user.id
+    data = await state.get_data()
+    lead_id = int(data.get("lead_id") or 0)
+    if not lead_id:
+        await state.clear()
+        return await message.answer("❌ Нет лида.")
+
+    lead = await get_validated_lead_by_id(uid, lead_id)
+    if not lead:
+        await state.clear()
+        return await message.answer("❌ Лид не найден.")
+
+    from database import upsert_validated_lead
+    from services.fixture_fields import normalize_fixture_fields
+    import json
+
+    raw = lead.get("raw_json") or "{}"
+    try:
+        fx = json.loads(raw)
+        if not isinstance(fx, dict):
+            fx = {}
+    except json.JSONDecodeError:
+        fx = {}
+    fx["item_price"] = text
+    fields = normalize_fixture_fields(fx)
+    email = (lead.get("email") or "").strip().lower()
+    person = (lead.get("person_name") or "").strip()
+
+    await upsert_validated_lead(
+        uid,
+        email=email,
+        person_name=person,
+        email_local=(lead.get("email_local") or email.split("@")[0]),
+        email_domain=(lead.get("email_domain") or email.split("@")[-1]),
+        item_title=fields["item_title"] or (lead.get("item_title") or ""),
+        item_price=text,
+        item_link=fields["item_link"] or (lead.get("item_link") or ""),
+        person_link=(lead.get("person_link") or ""),
+        location=fields["location"] or (lead.get("location") or ""),
+        item_photo=fields["item_photo"] or (lead.get("item_photo") or ""),
+        raw_json=json.dumps(fx, ensure_ascii=False),
+        email_norm=lead.get("email_norm") or "",
+        seller_key=lead.get("seller_key") or "",
+        title_key=lead.get("title_key") or "",
+    )
+
+    card_msg_id = data.get("link_card_message_id")
+    anchor = data.get("anchor_message_id")
+    profile = await load_gag_profile(uid)
+
+    try:
+        result = await create_gag_link_for_incoming(
+            uid,
+            contact_email=email,
+            lead_id=lead_id,
+        )
+        new_link = result.url
+    except GagNotConfiguredError as exc:
+        await state.clear()
+        return await message.answer(f"❌ {exc}", parse_mode="HTML")
+    except Exception as exc:
+        await state.clear()
+        return await message.answer(f"❌ {str(exc)[:350]}")
+
+    from services.imap_fetch import service_label_from_link
+
+    svc = service_label_from_link(fields["item_link"] or "") or ""
+    cap = build_link_card_caption(
+        offer_title=fields["item_title"] or (lead.get("item_title") or ""),
+        offer_price=text,
+        profile_title=profile.title,
+        service_label=svc,
+        item_link=fields["item_link"] or (lead.get("item_link") or ""),
+        gag_link=new_link,
+    )
+    kb = build_link_card_keyboard(lead_id=lead_id)
+
+    if card_msg_id:
+        try:
+            await message.bot.edit_message_caption(
+                chat_id=message.chat.id,
+                message_id=int(card_msg_id),
+                caption=cap,
+                parse_mode="HTML",
+                reply_markup=kb,
+            )
+        except Exception:
+            pass
+
+    await state.clear()
+    await message.answer(
+        f"✅ Цена обновлена: <code>{e(text)}</code>\n"
+        "Карточка ссылки обновлена.",
+        parse_mode="HTML",
+        reply_to_message_id=int(anchor) if anchor else None,
+    )

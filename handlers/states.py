@@ -18,3 +18,7 @@ class MailReply(StatesGroup):
     waiting_choice = State()
     waiting_text = State()
 
+
+class LeadPrice(StatesGroup):
+    waiting_price = State()
+
