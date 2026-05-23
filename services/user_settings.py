@@ -7,6 +7,7 @@ import aiosqlite
 from database import DB_PATH
 
 TOGGLE_KEYS = frozenset({"smart_mode", "spoofing", "block_control"})
+SPOOF_SUBJECT_KEY = "spoof_subject"
 
 
 async def get_setting(user_id: int, key: str) -> str | None:

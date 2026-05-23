@@ -5,6 +5,7 @@ from aiogram.types import Message
 from config import Settings
 from database import (
     count_smtp_accounts,
+    count_smtp_mailing_accounts,
     count_validated_leads,
     get_last_campaign,
     get_running_campaign,
@@ -22,6 +23,7 @@ async def cmd_status(message: Message, settings: Settings) -> None:
     running = await get_running_campaign(uid)
     last = await get_last_campaign(uid)
     accounts = await count_smtp_accounts(uid)
+    mailing = await count_smtp_mailing_accounts(uid)
     sender = await get_user_sender_name(uid)
 
     lines = ["📊 <b>Статус</b>\n"]
@@ -29,7 +31,12 @@ async def cmd_status(message: Message, settings: Settings) -> None:
     if sender:
         lines.append(f"Имя отправителя: <b>{sender}</b>")
 
-    lines.append(f"SMTP-аккаунтов: <b>{accounts}</b>")
+    if accounts != mailing:
+        lines.append(
+            f"Почт: <b>{accounts}</b> · для рассылки SMTP: <b>{mailing}</b>"
+        )
+    else:
+        lines.append(f"SMTP-аккаунтов: <b>{accounts}</b>")
 
     if running:
         lines.append(

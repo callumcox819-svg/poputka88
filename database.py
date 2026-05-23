@@ -108,6 +108,8 @@ async def init_db() -> None:
         for stmt in (
             "ALTER TABLE smtp_accounts ADD COLUMN provider TEXT NOT NULL DEFAULT ''",
             "ALTER TABLE user_prefs ADD COLUMN sender_name TEXT NOT NULL DEFAULT ''",
+            "ALTER TABLE smtp_accounts ADD COLUMN smtp_enabled INTEGER NOT NULL DEFAULT 1",
+            "ALTER TABLE smtp_accounts ADD COLUMN last_error TEXT NOT NULL DEFAULT ''",
         ):
             try:
                 await db.execute(stmt)
@@ -291,7 +293,8 @@ async def upsert_smtp_account(
                 """
                 UPDATE smtp_accounts SET
                     sender_name = ?, password = ?, smtp_host = ?, smtp_port = ?,
-                    imap_host = ?, imap_port = ?, provider = ?, enabled = 1
+                    imap_host = ?, imap_port = ?, provider = ?, enabled = 1,
+                    smtp_enabled = 1, last_error = ''
                 WHERE id = ?
                 """,
                 (
@@ -366,23 +369,82 @@ async def get_last_campaign(user_id: int) -> dict | None:
         return dict(row) if row else None
 
 
-async def list_smtp_accounts(user_id: int, *, with_secrets: bool = False) -> list[dict]:
-    cols = (
-        "id, sender_name, email, password, smtp_host, smtp_port, imap_host, imap_port, provider, enabled"
-        if with_secrets
-        else "id, sender_name, email, smtp_host, smtp_port, imap_host, imap_port, provider, enabled"
+def _smtp_account_cols(*, with_secrets: bool) -> str:
+    base = (
+        "id, sender_name, email, smtp_host, smtp_port, imap_host, imap_port, "
+        "provider, enabled, smtp_enabled, last_error"
     )
+    if with_secrets:
+        return (
+            "id, sender_name, email, password, smtp_host, smtp_port, imap_host, "
+            "imap_port, provider, enabled, smtp_enabled, last_error"
+        )
+    return base
+
+
+async def list_smtp_accounts(user_id: int, *, with_secrets: bool = False) -> list[dict]:
+    """Все активные ящики (IMAP + список в настройках)."""
     async with aiosqlite.connect(DB_PATH) as db:
         db.row_factory = aiosqlite.Row
         cur = await db.execute(
             f"""
-            SELECT {cols}
+            SELECT {_smtp_account_cols(with_secrets=with_secrets)}
             FROM smtp_accounts WHERE user_id = ? AND enabled = 1
             ORDER BY id
             """,
             (user_id,),
         )
         return [dict(r) for r in await cur.fetchall()]
+
+
+async def list_smtp_mailing_accounts(
+    user_id: int, *, with_secrets: bool = False
+) -> list[dict]:
+    """Ящики, с которых можно слать рассылку (не smtp_blocked)."""
+    async with aiosqlite.connect(DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        cur = await db.execute(
+            f"""
+            SELECT {_smtp_account_cols(with_secrets=with_secrets)}
+            FROM smtp_accounts
+            WHERE user_id = ? AND enabled = 1 AND smtp_enabled = 1
+            ORDER BY id
+            """,
+            (user_id,),
+        )
+        return [dict(r) for r in await cur.fetchall()]
+
+
+async def mark_account_smtp_blocked(
+    user_id: int, account_id: int, reason: str
+) -> bool:
+    async with aiosqlite.connect(DB_PATH) as db:
+        cur = await db.execute(
+            """
+            UPDATE smtp_accounts
+            SET smtp_enabled = 0, last_error = ?
+            WHERE id = ? AND user_id = ? AND enabled = 1 AND smtp_enabled = 1
+            """,
+            ((reason or "")[:1000], account_id, user_id),
+        )
+        await db.commit()
+        return cur.rowcount > 0
+
+
+async def disable_account_fully(
+    user_id: int, account_id: int, reason: str
+) -> bool:
+    async with aiosqlite.connect(DB_PATH) as db:
+        cur = await db.execute(
+            """
+            UPDATE smtp_accounts
+            SET enabled = 0, smtp_enabled = 0, last_error = ?
+            WHERE id = ? AND user_id = ?
+            """,
+            ((reason or "")[:1000], account_id, user_id),
+        )
+        await db.commit()
+        return cur.rowcount > 0
 
 
 async def get_smtp_account(account_id: int, user_id: int) -> dict | None:
@@ -410,6 +472,19 @@ async def count_smtp_accounts(user_id: int) -> int:
     async with aiosqlite.connect(DB_PATH) as db:
         cur = await db.execute(
             "SELECT COUNT(*) FROM smtp_accounts WHERE user_id = ? AND enabled = 1",
+            (user_id,),
+        )
+        row = await cur.fetchone()
+        return int(row[0]) if row else 0
+
+
+async def count_smtp_mailing_accounts(user_id: int) -> int:
+    async with aiosqlite.connect(DB_PATH) as db:
+        cur = await db.execute(
+            """
+            SELECT COUNT(*) FROM smtp_accounts
+            WHERE user_id = ? AND enabled = 1 AND smtp_enabled = 1
+            """,
             (user_id,),
         )
         row = await cur.fetchone()

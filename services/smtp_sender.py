@@ -57,6 +57,13 @@ def format_from_header(account: dict[str, Any]) -> str:
     return email
 
 
+def format_from_with_name(email: str, display_name: str | None) -> str:
+    name = (display_name or "").strip()
+    if name:
+        return f'"{name}" <{email}>'
+    return email
+
+
 async def send_one(
     settings: Settings,
     *,
@@ -67,13 +74,17 @@ async def send_one(
     transfer: TransferEncoding = TransferEncoding.AUTO,
     reply_to: str | None = None,
     account: dict[str, Any] | None = None,
+    from_display_name: str | None = None,
     use_tls: bool | None = None,
     proxy: dict[str, Any] | None = None,
 ) -> EncodingName:
     enc = resolve_encoding(transfer, body, is_html=is_html)
 
     if account:
-        mail_from = format_from_header(account)
+        if from_display_name:
+            mail_from = format_from_with_name(account["email"], from_display_name)
+        else:
+            mail_from = format_from_header(account)
         host = account["smtp_host"]
         port = int(account["smtp_port"])
         user = account["email"]

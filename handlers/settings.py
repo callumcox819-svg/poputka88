@@ -17,7 +17,13 @@ from handlers.settings_accounts import render_accounts_menu
 from keyboards.main_menu import main_keyboard
 from keyboards.settings_happy import back_settings_kb, settings_menu_kb
 from services.mailing_timing import load_timing, save_timing
-from services.user_settings import get_setting, get_toggle_flags, set_setting, toggle_bool
+from services.user_settings import (
+    SPOOF_SUBJECT_KEY,
+    get_setting,
+    get_toggle_flags,
+    set_setting,
+    toggle_bool,
+)
 from utils.callback_edit import cq_edit_text
 from utils.text_html import e
 
@@ -35,6 +41,7 @@ class SettingsInput(StatesGroup):
     priority = State()
     timings = State()
     spoof_name = State()
+    spoof_subject = State()
     api_key = State()
     profile_title = State()
     profile_name = State()
@@ -225,19 +232,28 @@ async def timings_set(message: Message, state: FSMContext) -> None:
 @router.callback_query(F.data == "spoof_name_menu")
 async def spoof_name_menu(callback: CallbackQuery, state: FSMContext) -> None:
     await state.clear()
-    cur = await get_user_sender_name(callback.from_user.id) or "— не задано —"
+    uid = callback.from_user.id
+    cur_name = await get_user_sender_name(uid) or "— не задано —"
+    cur_subj = await get_setting(uid, SPOOF_SUBJECT_KEY) or "— не задана —"
     kb = InlineKeyboardMarkup(
         inline_keyboard=[
             [InlineKeyboardButton(text="✅ Установить имя", callback_data="spoof_name_set")],
+            [
+                InlineKeyboardButton(
+                    text="✅ Установить тему", callback_data="spoof_subject_set"
+                )
+            ],
             [InlineKeyboardButton(text="⬅️ Назад", callback_data="settings_open")],
         ]
     )
     await cq_edit_text(
         callback,
         f"👤 <b>Имя для спуфинга</b>\n\n"
-        f"Текущее: <b>{e(cur)}</b>\n\n"
-        "Используется в поле From при 🟢 Спуфинг.\n"
-        "Также задаётся в «⚡ Быстрое добавление».",
+        f"Имя (From): <b>{e(cur_name)}</b>\n"
+        f"Тема (Subject): <b>{e(cur_subj)}</b>\n\n"
+        "При 🟢 Спуфинг подставляются только в <b>HTML</b>-рассылке.\n"
+        "В теле письма можно использовать <code>{{NICK}}</code>.\n"
+        "Имя также задаётся в «⚡ Быстрое добавление».",
         reply_markup=kb,
     )
     await callback.answer()
@@ -266,6 +282,33 @@ async def spoof_name_save(message: Message, state: FSMContext) -> None:
     await set_user_sender_name(message.from_user.id, name)
     await state.clear()
     await message.answer(f"✅ Имя сохранено: <b>{e(name)}</b>", parse_mode="HTML")
+    kb = await settings_kb_for(message.from_user.id)
+    await message.answer(f"⚙️ <b>{SETTINGS_MENU_TEXT}</b>", reply_markup=kb, parse_mode="HTML")
+
+
+@router.callback_query(F.data == "spoof_subject_set")
+async def spoof_subject_set(callback: CallbackQuery, state: FSMContext) -> None:
+    await state.set_state(SettingsInput.spoof_subject)
+    await cq_edit_text(
+        callback,
+        "Введите тему письма для HTML-спуфинга:",
+        reply_markup=InlineKeyboardMarkup(
+            inline_keyboard=[
+                [InlineKeyboardButton(text="🚫 Отмена", callback_data="spoof_name_menu")]
+            ]
+        ),
+    )
+    await callback.answer()
+
+
+@router.message(SettingsInput.spoof_subject)
+async def spoof_subject_save(message: Message, state: FSMContext) -> None:
+    subj = (message.text or "").strip()
+    if not subj:
+        return await message.answer("Тема не может быть пустой.")
+    await set_setting(message.from_user.id, SPOOF_SUBJECT_KEY, subj)
+    await state.clear()
+    await message.answer(f"✅ Тема сохранена: <b>{e(subj)}</b>", parse_mode="HTML")
     kb = await settings_kb_for(message.from_user.id)
     await message.answer(f"⚙️ <b>{SETTINGS_MENU_TEXT}</b>", reply_markup=kb, parse_mode="HTML")
 

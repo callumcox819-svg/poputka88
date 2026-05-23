@@ -16,10 +16,12 @@ PAGE_SIZE = 10
 def _accounts_kb(accounts: list[dict], page: int, total_pages: int) -> InlineKeyboardMarkup:
     rows: list[list[InlineKeyboardButton]] = []
     for acc in accounts:
+        smtp_ok = int(acc.get("smtp_enabled", 1))
+        tag = "📧" if smtp_ok else "🔴"
         rows.append(
             [
                 InlineKeyboardButton(
-                    text=f"📧 {acc['email']}",
+                    text=f"{tag} {acc['email']}",
                     callback_data=f"acc_info:{acc['id']}",
                 ),
                 InlineKeyboardButton(
@@ -59,6 +61,7 @@ async def render_accounts_menu(target: CallbackQuery, user_id: int, page: int = 
             f"📬 <b>Почтовые аккаунты</b>\n\n"
             f"Всего: <b>{total}</b> · страница <b>{page}/{total_pages}</b>\n\n"
             "🗑 — удалить аккаунт.\n"
+            "🔴 — только IMAP (SMTP заблокирован).\n"
             "Добавить: «⚡ Быстрое добавление» на главной."
         )
     else:

@@ -17,6 +17,7 @@ from services.proxy_pool import (
     mark_proxy_mailing_dead,
     pick_next_proxy,
 )
+from services.html_spoof import prepare_html_outbound
 from services.smtp_sender import EncodingName, send_one
 
 
@@ -49,6 +50,9 @@ async def send_mail(
     Отправить письмо. При наличии прокси у user_id — только через пул живых SOCKS5.
   """
     uid = int(user_id)
+    subject, body, from_display_name = await prepare_html_outbound(
+        uid, subject=subject, body=body, is_html=is_html
+    )
     configured = await user_has_proxies(uid)
 
     if not configured:
@@ -61,6 +65,7 @@ async def send_mail(
             transfer=transfer,
             reply_to=reply_to,
             account=account,
+            from_display_name=from_display_name,
             use_tls=use_tls,
             proxy=None,
         )
@@ -89,6 +94,7 @@ async def send_mail(
                 transfer=transfer,
                 reply_to=reply_to,
                 account=account,
+                from_display_name=from_display_name,
                 use_tls=use_tls,
                 proxy=proxy,
             )
