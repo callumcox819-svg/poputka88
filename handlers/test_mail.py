@@ -282,7 +282,13 @@ async def _send_test_one(
     except Exception as exc:
         return False, str(exc)[:200]
 
-    lead_id = await register_test_mail_lead(user_id, to_email, fixture)
+    try:
+        lead_id = await register_test_mail_lead(user_id, to_email, fixture)
+    except Exception as exc:
+        lead_id = None
+        lead_err = str(exc)[:120]
+    else:
+        lead_err = ""
     lead_hint = ""
     if lead_id:
         photo = "📷" if (fixture.get("item_photo") or "").strip() else ""
@@ -291,6 +297,8 @@ async def _send_test_one(
             f"\n🧾 Лид #{lead_id} (фото/цена/GAG из JSON) {photo}"
             + (f" · <code>{e(price)}</code>" if price else "")
         )
+    elif lead_err:
+        lead_hint = f"\n⚠️ Лид не сохранён: {e(lead_err)}"
 
     return True, (
         f"✅ <code>{e(to_email)}</code>\n"

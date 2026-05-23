@@ -50,7 +50,7 @@ async def register_test_mail_lead(
     person = fields["person_name"] or email.split("@")[0]
     local, _, domain = email.partition("@")
 
-    _created, lead_id = await upsert_validated_lead(
+    _created, lead_id, _em = await upsert_validated_lead(
         user_id,
         email=email,
         person_name=person,
