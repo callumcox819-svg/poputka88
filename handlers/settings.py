@@ -119,7 +119,7 @@ async def priority_menu(callback: CallbackQuery, state: FSMContext) -> None:
     await cq_edit_text(
         callback,
         "📊 <b>Приоритет отправки</b>\n\n"
-        "Домен №1 валидируется первым, потом №2 и т.д.\n\n"
+        "Домен №1 проверяется первым при валидации JSON, потом №2 и т.д.\n\n"
         f"<b>Текущий приоритет:</b>\n{lst}",
         reply_markup=kb,
     )

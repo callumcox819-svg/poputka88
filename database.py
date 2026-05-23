@@ -81,6 +81,27 @@ async def init_db() -> None:
 
             CREATE INDEX IF NOT EXISTS idx_campaigns_user_status
                 ON campaigns(user_id, status);
+
+            CREATE TABLE IF NOT EXISTS validated_leads (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id INTEGER NOT NULL,
+                email TEXT NOT NULL,
+                person_name TEXT NOT NULL DEFAULT '',
+                email_local TEXT NOT NULL DEFAULT '',
+                email_domain TEXT NOT NULL DEFAULT '',
+                item_title TEXT NOT NULL DEFAULT '',
+                item_price TEXT NOT NULL DEFAULT '',
+                item_link TEXT NOT NULL DEFAULT '',
+                person_link TEXT NOT NULL DEFAULT '',
+                location TEXT NOT NULL DEFAULT '',
+                item_photo TEXT NOT NULL DEFAULT '',
+                raw_json TEXT NOT NULL,
+                created_at TEXT NOT NULL DEFAULT (datetime('now')),
+                UNIQUE(user_id, email)
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_validated_leads_user
+                ON validated_leads(user_id, created_at DESC);
             """
         )
         await db.commit()
@@ -524,6 +545,79 @@ async def delete_all_proxies(user_id: int) -> int:
         cur = await db.execute("DELETE FROM proxies WHERE user_id = ?", (user_id,))
         await db.commit()
         return int(cur.rowcount or 0)
+
+
+async def save_validated_lead(
+    user_id: int,
+    *,
+    email: str,
+    person_name: str,
+    email_local: str,
+    email_domain: str,
+    item_title: str = "",
+    item_price: str = "",
+    item_link: str = "",
+    person_link: str = "",
+    location: str = "",
+    item_photo: str = "",
+    raw_json: str,
+) -> tuple[bool, str]:
+    """Возвращает (created, email). created=False если дубликат email."""
+    email = email.strip().lower()
+    async with aiosqlite.connect(DB_PATH) as db:
+        cur = await db.execute(
+            "SELECT id FROM validated_leads WHERE user_id = ? AND email = ?",
+            (user_id, email),
+        )
+        if await cur.fetchone():
+            return False, email
+        await db.execute(
+            """
+            INSERT INTO validated_leads (
+                user_id, email, person_name, email_local, email_domain,
+                item_title, item_price, item_link, person_link, location,
+                item_photo, raw_json
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                user_id,
+                email,
+                person_name,
+                email_local,
+                email_domain,
+                item_title,
+                item_price,
+                item_link,
+                person_link,
+                location,
+                item_photo,
+                raw_json,
+            ),
+        )
+        await db.commit()
+        return True, email
+
+
+async def count_validated_leads(user_id: int) -> int:
+    async with aiosqlite.connect(DB_PATH) as db:
+        cur = await db.execute(
+            "SELECT COUNT(*) FROM validated_leads WHERE user_id = ?",
+            (user_id,),
+        )
+        row = await cur.fetchone()
+        return int(row[0]) if row else 0
+
+
+async def list_validated_emails(user_id: int, *, limit: int = 10000) -> list[str]:
+    async with aiosqlite.connect(DB_PATH) as db:
+        cur = await db.execute(
+            """
+            SELECT email FROM validated_leads WHERE user_id = ?
+            ORDER BY id DESC LIMIT ?
+            """,
+            (user_id, limit),
+        )
+        return [str(r[0]) for r in await cur.fetchall()]
 
 
 async def get_proxy(proxy_id: int, user_id: int) -> dict | None:

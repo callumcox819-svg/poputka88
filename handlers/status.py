@@ -3,7 +3,13 @@ from aiogram.filters import Command
 from aiogram.types import Message
 
 from config import Settings
-from database import count_smtp_accounts, get_last_campaign, get_running_campaign, get_user_sender_name
+from database import (
+    count_smtp_accounts,
+    count_validated_leads,
+    get_last_campaign,
+    get_running_campaign,
+    get_user_sender_name,
+)
 from keyboards.main_menu import BTN_STATUS, main_keyboard
 
 router = Router()
@@ -40,5 +46,8 @@ async def cmd_status(message: Message, settings: Settings) -> None:
     else:
         lines.append("\nРассылок ещё не было. /send — начать.")
 
+    leads = await count_validated_leads(uid)
+    if leads:
+        lines.append(f"📧 Валидированных продавцов: <b>{leads}</b>")
     lines.append(f"\nЗадержка между письмами: <b>{settings.send_delay_sec}</b> сек.")
     await message.answer("\n".join(lines), parse_mode="HTML", reply_markup=main_keyboard())

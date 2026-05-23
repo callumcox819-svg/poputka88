@@ -7,7 +7,7 @@ load_dotenv()
 
 
 def _admin_ids() -> frozenset[int]:
-    raw = os.getenv("ADMIN_IDS", "7416000184")
+    raw = os.getenv("ADMIN_IDS", "")
     ids = []
     for part in raw.split(","):
         part = part.strip()
@@ -28,10 +28,31 @@ class Settings:
     smtp_use_tls: bool
     send_delay_sec: float
     max_recipients: int
+    validemail_api_keys: tuple[str, ...]
+    validemail_url: str
+    validemail_timeout: int
+    validemail_concurrency: int
+
+
+def _validemail_api_keys() -> tuple[str, ...]:
+    keys: list[str] = []
+    seen: set[str] = set()
+    for env_name in ("VALIDEMAIL_API_KEY", "VALIDEMAIL_API_KEY_2"):
+        k = os.getenv(env_name, "").strip()
+        if k and k not in seen:
+            seen.add(k)
+            keys.append(k)
+    extra = os.getenv("VALIDEMAIL_API_KEYS", "")
+    for part in extra.split(","):
+        k = part.strip()
+        if k and k not in seen:
+            seen.add(k)
+            keys.append(k)
+    return tuple(keys)
 
 
 def load_settings() -> Settings:
-    token = os.getenv("BOT_TOKEN", "8752278416:AAFFPD-b-4ZuJlrbkCT-ACrS_juZuhq46Mg").strip()
+    token = os.getenv("BOT_TOKEN", "").strip()
     if not token:
         raise RuntimeError("BOT_TOKEN is not set in .env")
 
@@ -46,4 +67,10 @@ def load_settings() -> Settings:
         smtp_use_tls=os.getenv("SMTP_USE_TLS", "true").lower() in ("1", "true", "yes"),
         send_delay_sec=float(os.getenv("SEND_DELAY_SEC", "2")),
         max_recipients=int(os.getenv("MAX_RECIPIENTS_PER_CAMPAIGN", "5000")),
+        validemail_api_keys=_validemail_api_keys(),
+        validemail_url=os.getenv(
+            "VALIDEMAIL_URL", "https://validemail.co/api/v1/validate"
+        ).strip(),
+        validemail_timeout=int(os.getenv("VALIDEMAIL_TIMEOUT", "8")),
+        validemail_concurrency=int(os.getenv("VALIDEMAIL_CONCURRENCY", "12")),
     )

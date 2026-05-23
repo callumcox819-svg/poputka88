@@ -72,3 +72,10 @@ async def btn_start_mail(message: Message, state: FSMContext, settings: Settings
 @router.message(F.func(lambda m: match_settings_menu_text(getattr(m, "text", None))))
 async def btn_settings(message: Message, state: FSMContext) -> None:
     await open_settings_menu(message, state)
+
+
+@router.message(F.text == "📧 Валидация")
+async def btn_validate(message: Message, state: FSMContext) -> None:
+    from handlers.validation import cmd_validate
+
+    await cmd_validate(message, state)

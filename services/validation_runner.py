@@ -1,14 +1,18 @@
+"""Проверка списка готовых email через ValidEmail (несколько ключей)."""
+
+from __future__ import annotations
+
 import asyncio
 import logging
 
 from aiogram import Bot
 
-from services.email_validate import validate_one
+from config import Settings
 from services.task_control import (
     clear_stop_validation,
-    request_stop_validation,
     should_stop_validation,
 )
+from services.validemail_pool import ValidemailKeyPool
 from utils.email_list import parse_emails
 
 logger = logging.getLogger(__name__)
@@ -19,13 +23,37 @@ _active_users: set[int] = set()
 def stop_validation(user_id: int) -> bool:
     if user_id not in _active_users:
         return False
+    from services.task_control import request_stop_validation
+
     request_stop_validation(user_id)
     return True
 
 
-async def run_validation(bot: Bot, user_id: int, chat_id: int, text: str) -> None:
+def _split_round_robin(items: list[str], n: int) -> list[list[str]]:
+    chunks: list[list[str]] = [[] for _ in range(n)]
+    for i, x in enumerate(items):
+        chunks[i % n].append(x)
+    return chunks
+
+
+async def run_email_list_validation(
+    bot: Bot,
+    settings: Settings,
+    user_id: int,
+    chat_id: int,
+    text: str,
+) -> None:
     if user_id in _active_users:
         await bot.send_message(chat_id, "Проверка уже идёт. /stopcheck — остановить.")
+        return
+
+    api_keys = list(settings.validemail_api_keys)
+    if not api_keys:
+        await bot.send_message(
+            chat_id,
+            "❌ Задайте VALIDEMAIL_API_KEY и VALIDEMAIL_API_KEY_2 в .env",
+            parse_mode="HTML",
+        )
         return
 
     emails = parse_emails(text)
@@ -38,34 +66,46 @@ async def run_validation(bot: Bot, user_id: int, chat_id: int, text: str) -> Non
 
     valid: list[str] = []
     invalid: list[tuple[str, str]] = []
+    lock = asyncio.Lock()
+    per_key = max(2, settings.validemail_concurrency)
 
     try:
-        await bot.send_message(chat_id, f"Проверка {len(emails)} адресов…")
-        for i, email in enumerate(emails, 1):
+        pool = ValidemailKeyPool(
+            api_keys,
+            url=settings.validemail_url,
+            timeout_sec=settings.validemail_timeout,
+            concurrency_per_key=per_key,
+        )
+        await bot.send_message(
+            chat_id,
+            f"Проверка {len(emails)} адресов · ключей: {pool.key_count}…",
+        )
+
+        async def _check_one(email: str) -> None:
             if should_stop_validation(user_id):
-                await bot.send_message(
-                    chat_id,
-                    f"Остановлено на {i}/{len(emails)}.\n"
-                    f"Валидных: {len(valid)}, невалидных: {len(invalid)}.",
-                )
                 return
+            ok, reason, _ = await pool.validate(email)
+            async with lock:
+                if ok:
+                    valid.append(email)
+                else:
+                    invalid.append((email, reason))
 
-            ok, reason = await validate_one(email)
-            if ok:
-                valid.append(email)
-            else:
-                invalid.append((email, reason))
+        chunks = _split_round_robin(emails, pool.key_count)
 
-            if i % 25 == 0:
-                await bot.send_message(chat_id, f"… {i}/{len(emails)}")
+        async def _chunk_worker(chunk: list[str]) -> None:
+            for email in chunk:
+                if should_stop_validation(user_id):
+                    return
+                await _check_one(email)
 
-            await asyncio.sleep(0.05)
+        await asyncio.gather(*[_chunk_worker(c) for c in chunks if c])
 
         lines = [
             f"Готово. Валидных: {len(valid)}, невалидных: {len(invalid)}.",
         ]
         if valid[:20]:
-            lines.append("\n✅ Примеры валидных:\n" + "\n".join(valid[:20]))
+            lines.append("\n✅ Примеры:\n" + "\n".join(valid[:20]))
         if invalid[:15]:
             lines.append(
                 "\n❌ Невалидные:\n"
