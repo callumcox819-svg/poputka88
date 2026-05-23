@@ -17,6 +17,3 @@ class QuickAdd(StatesGroup):
 class EmailValidation(StatesGroup):
     waiting_list = State()
 
-
-class SettingsEdit(StatesGroup):
-    delay = State()

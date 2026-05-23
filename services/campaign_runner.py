@@ -6,7 +6,6 @@ from aiogram import Bot
 from config import Settings
 from database import (
     get_campaign,
-    get_user_delay,
     list_smtp_accounts,
     mark_failed,
     mark_sent,
@@ -14,6 +13,7 @@ from database import (
     set_campaign_status,
 )
 from services.encoding import TransferEncoding
+from services.mailing_timing import load_timing
 from services.smtp_sender import send_one
 from services.task_control import (
     clear_stop_campaign,
@@ -61,7 +61,8 @@ async def run_campaign(
         accounts = await list_smtp_accounts(user_id, with_secrets=True)
         await set_campaign_status(campaign_id, "running")
         transfer = TransferEncoding(camp["encoding"])
-        delay = await get_user_delay(user_id, settings.send_delay_sec)
+        timing = await load_timing(user_id, settings.send_delay_sec)
+        delay = float(timing.get("min", settings.send_delay_sec))
 
         await bot.send_message(
             chat_id,

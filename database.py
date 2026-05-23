@@ -57,6 +57,13 @@ async def init_db() -> None:
 
             CREATE INDEX IF NOT EXISTS idx_recipients_campaign
                 ON recipients(campaign_id, status);
+            CREATE TABLE IF NOT EXISTS user_settings (
+                user_id INTEGER NOT NULL,
+                key TEXT NOT NULL,
+                value TEXT NOT NULL DEFAULT '',
+                PRIMARY KEY (user_id, key)
+            );
+
             CREATE INDEX IF NOT EXISTS idx_campaigns_user_status
                 ON campaigns(user_id, status);
             """
@@ -351,6 +358,16 @@ async def get_smtp_account(account_id: int, user_id: int) -> dict | None:
         )
         row = await cur.fetchone()
         return dict(row) if row else None
+
+
+async def delete_smtp_account(user_id: int, account_id: int) -> bool:
+    async with aiosqlite.connect(DB_PATH) as db:
+        cur = await db.execute(
+            "DELETE FROM smtp_accounts WHERE id = ? AND user_id = ?",
+            (account_id, user_id),
+        )
+        await db.commit()
+        return cur.rowcount > 0
 
 
 async def count_smtp_accounts(user_id: int) -> int:
