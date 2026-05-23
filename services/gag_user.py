@@ -67,6 +67,26 @@ def profile_ready(profile: GagProfile) -> bool:
     return bool(profile.title and profile.name and profile.address)
 
 
+async def generate_link_for_lead(user_id: int, lead: dict) -> str:
+    """
+    GAG /generate по строке validated_leads (JSON void-parser).
+    title/price/image/link — из лида; name/address — из профиля GAG.
+    """
+    title = (lead.get("item_title") or "").strip()
+    if not title:
+        raise GagNotConfiguredError(
+            "У лида нет названия объявления (item_title). Прогоните валидацию JSON."
+        )
+    price = (lead.get("item_price") or "").strip() or "0"
+    return await generate_link_for_user(
+        user_id,
+        title=title,
+        price=price,
+        offer_link=(lead.get("item_link") or "").strip(),
+        image=(lead.get("item_photo") or "").strip() or None,
+    )
+
+
 async def generate_link_for_user(
     user_id: int,
     *,
@@ -147,6 +167,7 @@ __all__ = [
     "GagNotConfiguredError",
     "GagProfile",
     "ad_id_from_url",
+    "generate_link_for_lead",
     "generate_link_for_user",
     "load_gag_profile",
     "profile_ready",

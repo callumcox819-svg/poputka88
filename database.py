@@ -102,6 +102,32 @@ async def init_db() -> None:
 
             CREATE INDEX IF NOT EXISTS idx_validated_leads_user
                 ON validated_leads(user_id, created_at DESC);
+
+            CREATE TABLE IF NOT EXISTS incoming_mails (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id INTEGER NOT NULL,
+                account_id INTEGER NOT NULL,
+                imap_uid TEXT NOT NULL,
+                message_id TEXT NOT NULL DEFAULT '',
+                from_email TEXT NOT NULL DEFAULT '',
+                from_name TEXT NOT NULL DEFAULT '',
+                subject TEXT NOT NULL DEFAULT '',
+                lead_id INTEGER,
+                campaign_id INTEGER,
+                recipient_id INTEGER,
+                generated_link TEXT NOT NULL DEFAULT '',
+                gag_ad_id TEXT NOT NULL DEFAULT '',
+                generation_status TEXT NOT NULL DEFAULT 'pending',
+                generation_error TEXT NOT NULL DEFAULT '',
+                notified INTEGER NOT NULL DEFAULT 0,
+                received_at TEXT NOT NULL DEFAULT (datetime('now')),
+                UNIQUE(account_id, imap_uid),
+                FOREIGN KEY (lead_id) REFERENCES validated_leads(id),
+                FOREIGN KEY (account_id) REFERENCES smtp_accounts(id)
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_incoming_mails_user
+                ON incoming_mails(user_id, received_at DESC);
             """
         )
         await db.commit()
@@ -110,6 +136,12 @@ async def init_db() -> None:
             "ALTER TABLE user_prefs ADD COLUMN sender_name TEXT NOT NULL DEFAULT ''",
             "ALTER TABLE smtp_accounts ADD COLUMN smtp_enabled INTEGER NOT NULL DEFAULT 1",
             "ALTER TABLE smtp_accounts ADD COLUMN last_error TEXT NOT NULL DEFAULT ''",
+            "ALTER TABLE recipients ADD COLUMN lead_id INTEGER",
+            "ALTER TABLE recipients ADD COLUMN generated_link TEXT NOT NULL DEFAULT ''",
+            "ALTER TABLE validated_leads ADD COLUMN offer_id INTEGER NOT NULL DEFAULT 0",
+            "ALTER TABLE validated_leads ADD COLUMN email_norm TEXT NOT NULL DEFAULT ''",
+            "ALTER TABLE validated_leads ADD COLUMN seller_key TEXT NOT NULL DEFAULT ''",
+            "ALTER TABLE validated_leads ADD COLUMN title_key TEXT NOT NULL DEFAULT ''",
         ):
             try:
                 await db.execute(stmt)
@@ -139,12 +171,24 @@ async def create_campaign(
 
 
 async def add_recipients(campaign_id: int, emails: list[str]) -> int:
+    camp = await get_campaign(campaign_id)
+    user_id = int(camp["user_id"]) if camp else 0
     rows = [(campaign_id, e.strip().lower()) for e in emails if e.strip()]
     async with aiosqlite.connect(DB_PATH) as db:
-        await db.executemany(
-            "INSERT INTO recipients (campaign_id, email) VALUES (?, ?)",
-            rows,
-        )
+        for cid, em in rows:
+            lead_id = None
+            if user_id:
+                cur = await db.execute(
+                    "SELECT id FROM validated_leads WHERE user_id = ? AND email = ?",
+                    (user_id, em),
+                )
+                lr = await cur.fetchone()
+                if lr:
+                    lead_id = int(lr[0])
+            await db.execute(
+                "INSERT INTO recipients (campaign_id, email, lead_id) VALUES (?, ?, ?)",
+                (cid, em, lead_id),
+            )
         await db.execute(
             """
             UPDATE campaigns
@@ -210,13 +254,28 @@ async def pending_recipients(campaign_id: int, limit: int = 50) -> list[str]:
 
 
 async def mark_sent(campaign_id: int, email: str) -> None:
+    email = email.strip().lower()
     async with aiosqlite.connect(DB_PATH) as db:
+        cur = await db.execute(
+            "SELECT user_id FROM campaigns WHERE id = ?", (campaign_id,)
+        )
+        camp = await cur.fetchone()
+        lead_id = None
+        if camp:
+            cur = await db.execute(
+                "SELECT id FROM validated_leads WHERE user_id = ? AND email = ?",
+                (int(camp[0]), email),
+            )
+            lr = await cur.fetchone()
+            if lr:
+                lead_id = int(lr[0])
         await db.execute(
             """
-            UPDATE recipients SET status = 'sent', sent_at = datetime('now')
+            UPDATE recipients SET status = 'sent', sent_at = datetime('now'),
+                lead_id = COALESCE(lead_id, ?)
             WHERE campaign_id = ? AND email = ?
             """,
-            (campaign_id, email),
+            (lead_id, campaign_id, email),
         )
         await db.execute(
             "UPDATE campaigns SET sent = sent + 1 WHERE id = ?",
@@ -636,9 +695,21 @@ async def save_validated_lead(
     location: str = "",
     item_photo: str = "",
     raw_json: str,
+    offer_id: int = 0,
+    email_norm: str = "",
+    seller_key: str = "",
+    title_key: str = "",
 ) -> tuple[bool, str]:
     """Возвращает (created, email). created=False если дубликат email."""
+    from services.lead_keys import email_norm_key, seller_match_key, title_match_key
+
     email = email.strip().lower()
+    if not email_norm:
+        email_norm = email_norm_key(email)
+    if not seller_key:
+        seller_key = seller_match_key(person_name)
+    if not title_key:
+        title_key = title_match_key(item_title)
     async with aiosqlite.connect(DB_PATH) as db:
         cur = await db.execute(
             "SELECT id FROM validated_leads WHERE user_id = ? AND email = ?",
@@ -651,8 +722,8 @@ async def save_validated_lead(
             INSERT INTO validated_leads (
                 user_id, email, person_name, email_local, email_domain,
                 item_title, item_price, item_link, person_link, location,
-                item_photo, raw_json
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                item_photo, raw_json, offer_id, email_norm, seller_key, title_key
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 user_id,
@@ -667,6 +738,10 @@ async def save_validated_lead(
                 location,
                 item_photo,
                 raw_json,
+                int(offer_id or 0),
+                email_norm,
+                seller_key,
+                title_key,
             ),
         )
         await db.commit()
@@ -693,6 +768,191 @@ async def list_validated_emails(user_id: int, *, limit: int = 10000) -> list[str
             (user_id, limit),
         )
         return [str(r[0]) for r in await cur.fetchall()]
+
+
+async def get_validated_lead_by_email(user_id: int, email: str) -> dict | None:
+    """Лид по email продавца (тот же, что в рассылке / ответе)."""
+    email = email.strip().lower()
+    async with aiosqlite.connect(DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        cur = await db.execute(
+            "SELECT * FROM validated_leads WHERE user_id = ? AND email = ?",
+            (user_id, email),
+        )
+        row = await cur.fetchone()
+        return dict(row) if row else None
+
+
+async def get_validated_lead_by_id(user_id: int, lead_id: int) -> dict | None:
+    async with aiosqlite.connect(DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        cur = await db.execute(
+            "SELECT * FROM validated_leads WHERE user_id = ? AND id = ?",
+            (user_id, lead_id),
+        )
+        row = await cur.fetchone()
+        return dict(row) if row else None
+
+
+async def find_lead_by_exact_email(user_id: int, email: str) -> dict | None:
+    return await get_validated_lead_by_email(user_id, email)
+
+
+async def find_lead_by_email_norm(user_id: int, email_norm: str) -> dict | None:
+    norm = (email_norm or "").strip().lower()
+    if not norm:
+        return None
+    async with aiosqlite.connect(DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        cur = await db.execute(
+            """
+            SELECT * FROM validated_leads WHERE user_id = ? AND email_norm = ?
+            ORDER BY id DESC LIMIT 1
+            """,
+            (user_id, norm),
+        )
+        row = await cur.fetchone()
+        if row:
+            return dict(row)
+        cur = await db.execute(
+            "SELECT * FROM validated_leads WHERE user_id = ? ORDER BY id DESC LIMIT 5000",
+            (user_id,),
+        )
+        rows = await cur.fetchall()
+    from services.lead_keys import email_norm_key
+
+    for row in rows:
+        lead = dict(row)
+        stored = (lead.get("email_norm") or "").strip()
+        if stored and stored == norm:
+            return lead
+        if email_norm_key(lead.get("email") or "") == norm:
+            return lead
+    return None
+
+
+async def find_lead_by_offer_id(user_id: int, offer_id: int) -> dict | None:
+    oid = int(offer_id)
+    if oid <= 0:
+        return None
+    async with aiosqlite.connect(DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        cur = await db.execute(
+            """
+            SELECT * FROM validated_leads
+            WHERE user_id = ? AND offer_id = ?
+            ORDER BY id DESC LIMIT 1
+            """,
+            (user_id, oid),
+        )
+        row = await cur.fetchone()
+        if row:
+            return dict(row)
+        cur = await db.execute(
+            "SELECT * FROM validated_leads WHERE user_id = ? ORDER BY id DESC",
+            (user_id,),
+        )
+        rows = await cur.fetchall()
+    from services.lead_keys import offer_id_from_lead_row
+
+    for row in rows:
+        lead = dict(row)
+        if int(lead.get("offer_id") or 0) == oid:
+            return lead
+        if offer_id_from_lead_row(lead) == oid:
+            return lead
+    return None
+
+
+async def find_lead_by_title(user_id: int, title_key: str) -> dict | None:
+    tkey = (title_key or "").strip()
+    if not tkey:
+        return None
+    async with aiosqlite.connect(DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        cur = await db.execute(
+            """
+            SELECT * FROM validated_leads
+            WHERE user_id = ? AND title_key = ?
+            ORDER BY id DESC LIMIT 1
+            """,
+            (user_id, tkey),
+        )
+        row = await cur.fetchone()
+        if row:
+            return dict(row)
+        cur = await db.execute(
+            "SELECT * FROM validated_leads WHERE user_id = ? ORDER BY id DESC",
+            (user_id,),
+        )
+        rows = await cur.fetchall()
+    from services.lead_keys import title_match_key
+
+    for row in rows:
+        lead = dict(row)
+        if title_match_key(lead.get("item_title") or "") == tkey:
+            return lead
+    return None
+
+
+async def find_lead_by_seller_key(user_id: int, seller_key: str) -> dict | None:
+    skey = (seller_key or "").strip().lower()
+    if not skey:
+        return None
+    async with aiosqlite.connect(DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        cur = await db.execute(
+            """
+            SELECT * FROM validated_leads
+            WHERE user_id = ? AND seller_key = ?
+            ORDER BY id DESC LIMIT 1
+            """,
+            (user_id, skey),
+        )
+        row = await cur.fetchone()
+        if row:
+            return dict(row)
+        cur = await db.execute(
+            "SELECT * FROM validated_leads WHERE user_id = ? ORDER BY id DESC",
+            (user_id,),
+        )
+        rows = await cur.fetchall()
+    from services.lead_keys import seller_match_key, seller_names_from_lead
+
+    for row in rows:
+        lead = dict(row)
+        if (lead.get("seller_key") or "").strip().lower() == skey:
+            return lead
+        for name in seller_names_from_lead(lead):
+            if seller_match_key(name) == skey:
+                return lead
+    return None
+
+
+async def save_incoming_gag_link(
+    incoming_id: int,
+    user_id: int,
+    *,
+    url: str,
+    gag_ad_id: str = "",
+    error: str = "",
+) -> bool:
+    """Сохранить ссылку после кнопки «Создать ссылку» (UI подключим позже)."""
+    status = "ok" if url else "error"
+    async with aiosqlite.connect(DB_PATH) as db:
+        cur = await db.execute(
+            """
+            UPDATE incoming_mails SET
+                generated_link = ?,
+                gag_ad_id = ?,
+                generation_status = ?,
+                generation_error = ?
+            WHERE id = ? AND user_id = ?
+            """,
+            (url[:2000], gag_ad_id[:64], status, (error or "")[:500], incoming_id, user_id),
+        )
+        await db.commit()
+        return cur.rowcount > 0
 
 
 async def get_proxy(proxy_id: int, user_id: int) -> dict | None:

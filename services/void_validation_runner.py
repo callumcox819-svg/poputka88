@@ -22,6 +22,7 @@ from services.seller_name import (
 )
 from services.task_control import clear_stop_validation, should_stop_validation
 from services.validemail_pool import ValidemailKeyPool, find_deliverable_email
+from services.lead_keys import email_norm_key, offer_id_from_item, seller_match_key, title_match_key
 from services.void_parser import seller_dedupe_key
 
 logger = logging.getLogger(__name__)
@@ -115,19 +116,24 @@ async def _process_items_chunk(
 
         if found_email:
             raw_json = json.dumps(item, ensure_ascii=False)
+            ititle = str(item.get("item_title") or item.get("title") or "")
             created, _ = await save_validated_lead(
                 user_id,
                 email=found_email,
                 person_name=name,
                 email_local=local,
                 email_domain=found_domain or "",
-                item_title=str(item.get("item_title") or ""),
-                item_price=str(item.get("item_price") or ""),
-                item_link=str(item.get("item_link") or ""),
+                item_title=ititle,
+                item_price=str(item.get("item_price") or item.get("price") or ""),
+                item_link=str(item.get("item_link") or item.get("link") or ""),
                 person_link=str(item.get("person_link") or ""),
                 location=str(item.get("location") or ""),
                 item_photo=str(item.get("item_photo") or ""),
                 raw_json=raw_json,
+                offer_id=int(offer_id_from_item(item) or 0),
+                email_norm=email_norm_key(found_email),
+                seller_key=seller_match_key(name),
+                title_key=title_match_key(ititle),
             )
             async with stats.lock:
                 if created:
