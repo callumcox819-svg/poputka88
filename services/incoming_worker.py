@@ -31,7 +31,7 @@ from services.lead_resolve import resolve_validated_lead
 logger = logging.getLogger(__name__)
 
 _worker_task: asyncio.Task | None = None
-POLL_SEC = float(os.getenv("INCOMING_POLL_SEC", "25"))
+POLL_SEC = float(os.getenv("INCOMING_POLL_SEC", "20"))
 
 
 def _format_price(price: str, currency: str = "") -> str:
@@ -157,7 +157,7 @@ async def _process_account(bot: Bot, acc: dict) -> int:
             last_uid=last_uid,
         )
     except Exception as exc:
-        logger.warning("IMAP acc_id=%s %s: %s", acc_id, email_addr, exc)
+        logger.error("IMAP acc_id=%s %s: %s", acc_id, email_addr, exc)
         return 0
 
     if new_last is not None:
@@ -271,7 +271,15 @@ def start_incoming_mail_worker(bot: Bot) -> None:
     if _worker_task and not _worker_task.done():
         return
     _worker_task = asyncio.create_task(_poll_loop(bot))
-    logger.info("Incoming IMAP worker started (poll=%ss)", POLL_SEC)
+
+    async def _log_accounts() -> None:
+        try:
+            n = len(await list_imap_poll_accounts())
+            logger.info("Incoming IMAP worker started (poll=%ss, accounts=%s)", POLL_SEC, n)
+        except Exception:
+            logger.info("Incoming IMAP worker started (poll=%ss)", POLL_SEC)
+
+    asyncio.create_task(_log_accounts())
 
 
 def stop_incoming_mail_worker() -> None:

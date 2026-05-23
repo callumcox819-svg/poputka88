@@ -95,20 +95,11 @@ async def _sender_account_emails(user_id: int) -> set[str]:
 
 async def _proxy_hint(user_id: int) -> str:
     if not await user_has_proxies(user_id):
-        return (
-            "📤 <b>Тест = plain text</b> — без прокси (как обычная рассылка без HTML).\n"
-            "🌐 Для <b>HTML</b> нужны SOCKS5 в «Прокси».\n"
-        )
+        return "🌐 <b>Прокси обязательны</b> для любой отправки — добавьте SOCKS5.\n"
     live = await live_proxy_count(user_id)
     if live < 1:
-        return (
-            "⚠️ Прокси в настройках есть, но <b>нет живых</b> — HTML не уйдёт.\n"
-            "Тест plain text попробует отправить напрямую.\n"
-        )
-    return (
-        f"🌐 Прокси: <b>{live}</b> живых — plain/HTML через SOCKS5 при отправке.\n"
-        "Тест сейчас: <b>plain text</b> (не HTML).\n"
-    )
+        return "⚠️ Прокси есть, но <b>нет живых</b> — отправка не пойдёт.\n"
+    return f"🌐 Прокси: <b>{live}</b> живых (вся отправка через SOCKS5).\n"
 
 
 async def _imap_hint(user_id: int) -> str:
@@ -124,12 +115,10 @@ async def _imap_hint(user_id: int) -> str:
         return "📬 IMAP: нет SMTP-ящиков.\n"
     if not poll:
         return (
-            "📬 IMAP: ящики есть, но <b>нет imap_host</b> — входящие в бот не придут.\n"
-            "Проверьте ящик в настройках или /imap_check.\n"
+            "📬 IMAP: ящики есть, но нет пароля/IMAP — входящие не придут.\n"
+            "Перепроверьте ⚡ Быстрое добавление или /imap_check.\n"
         )
-    return (
-        f"📬 IMAP: опрос <b>{len(poll)}</b> ящ. каждые ~25 с + после тест-отправки.\n"
-    )
+    return f"📬 IMAP: <b>{len(poll)}</b> ящ., авто-опрос ~20 с (как в happy88).\n"
 
 
 def _menu_text(

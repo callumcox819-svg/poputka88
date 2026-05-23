@@ -22,7 +22,7 @@ from services.smtp_sender import EncodingName, send_one
 
 
 class NoLiveProxyError(RuntimeError):
-    """В настройках есть прокси, но нет ни одного живого для отправки."""
+    """Нет прокси в настройках или нет ни одного живого SOCKS5 для отправки."""
 
 
 async def live_proxy_count(user_id: int) -> int:
@@ -47,33 +47,17 @@ async def send_mail(
     use_tls: bool | None = None,
 ) -> EncodingName:
     """
-    Отправить письмо. При наличии прокси у user_id — только через пул живых SOCKS5.
-  """
+    Отправить письмо. Всегда только через SOCKS5-прокси из настроек пользователя.
+    """
     uid = int(user_id)
     subject, body, from_display_name = await prepare_html_outbound(
         uid, subject=subject, body=body, is_html=is_html
     )
-    configured = await user_has_proxies(uid)
 
-    if is_html and not configured:
+    if not await user_has_proxies(uid):
         raise NoLiveProxyError(
-            "HTML-письма отправляются только через SOCKS5-прокси. "
-            "Добавьте прокси в 🌐 Прокси."
-        )
-
-    if not configured:
-        return await send_one(
-            settings,
-            to_addr=to_addr,
-            subject=subject,
-            body=body,
-            is_html=is_html,
-            transfer=transfer,
-            reply_to=reply_to,
-            account=account,
-            from_display_name=from_display_name,
-            use_tls=use_tls,
-            proxy=None,
+            "Добавьте SOCKS5-прокси в 🌐 Прокси. "
+            "Рассылка, ответы (пресеты/ручные) и HTML — только через прокси."
         )
 
     sendable = await list_sendable_proxies(uid)

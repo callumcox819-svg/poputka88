@@ -3,7 +3,10 @@
 from __future__ import annotations
 
 import json
+import logging
 import re
+
+logger = logging.getLogger(__name__)
 
 from aiogram import Bot, F, Router
 from aiogram.exceptions import TelegramBadRequest
@@ -350,6 +353,17 @@ async def run_imap_check(bot: Bot, chat_id: int, user_id: int) -> None:
     )
     results = await check_accounts_imap(active)
     text = format_imap_report(results)
+
+    from services.incoming_worker import poll_incoming_for_user
+
+    try:
+        acc_n, cards = await poll_incoming_for_user(bot, user_id)
+        text += (
+            f"\n\n📬 <b>Догон в бот:</b> опрошено {acc_n} ящ., новых карточек: <b>{cards}</b>"
+        )
+    except Exception:
+        logger.exception("imap_check catch-up poll failed")
+
     try:
         await status.edit_text(text, parse_mode="HTML")
     except Exception:

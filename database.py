@@ -1277,18 +1277,27 @@ async def find_lead_by_seller_key(user_id: int, seller_key: str) -> dict | None:
 
 
 async def list_imap_poll_accounts() -> list[dict]:
-    """Аккаунты для IMAP-воркера (все enabled, в т.ч. smtp_blocked)."""
+    """Аккаунты для IMAP-воркера (enabled=1; imap_host из БД или по домену email)."""
+    from services.imap_accounts import resolve_imap_account
+
     async with db_connect() as db:
         cur = await db.execute(
             """
             SELECT id, user_id, sender_name, email, password, imap_host, imap_port,
-                   imap_last_uid
+                   imap_last_uid, provider
             FROM smtp_accounts
-            WHERE enabled = 1 AND imap_host != ''
+            WHERE enabled = 1
             ORDER BY id
             """
         )
-        return [r.as_dict() for r in await cur.fetchall()]
+        rows = [r.as_dict() for r in await cur.fetchall()]
+
+    out: list[dict] = []
+    for acc in rows:
+        resolved = resolve_imap_account(acc)
+        if resolved:
+            out.append(resolved)
+    return out
 
 
 async def get_imap_last_uid(account_id: int) -> int | None:

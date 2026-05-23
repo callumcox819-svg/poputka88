@@ -7,6 +7,7 @@ import imaplib
 from typing import Any
 
 from database import get_imap_last_uid
+from services.imap_accounts import resolve_imap_account
 
 
 def _imap_connect(host: str, port: int, email: str, password: str) -> imaplib.IMAP4:
@@ -82,13 +83,21 @@ def check_inbox_detailed_sync(
 async def check_account_imap(acc: dict) -> dict[str, Any]:
     """Полная проверка одного ящика + last_uid из БД."""
     aid = int(acc.get("id") or 0)
+    resolved = resolve_imap_account(acc)
+    if not resolved:
+        return {
+            "email": acc.get("email") or "?",
+            "account_id": aid,
+            "ok": False,
+            "error": "нет email/пароля или IMAP host",
+        }
     result = await asyncio.to_thread(
         check_inbox_detailed_sync,
         account_id=aid,
-        email=acc["email"],
-        password=acc.get("password") or "",
-        imap_host=acc.get("imap_host") or "",
-        imap_port=int(acc.get("imap_port") or 993),
+        email=resolved["email"],
+        password=resolved.get("password") or "",
+        imap_host=resolved.get("imap_host") or "",
+        imap_port=int(resolved.get("imap_port") or 993),
     )
     if result.get("ok"):
         last_seen = await get_imap_last_uid(aid)
@@ -151,6 +160,7 @@ def format_imap_report(results: list[dict]) -> str:
 
     lines.append(f"\nПроверено: <b>{ok_n}/{len(results)}</b>")
     lines.append(
-        "\n<i>Фоновый опрос каждые ~25 с. Если pending&gt;0 и в TG пусто — /stopcheck не нужен, смотрите логи Railway.</i>"
+        "\n<i>Основной канал — фоновый IMAP (~20 с): все новые ответы в бот. "
+        "Эта проверка — догон, если письмо не попало в Telegram.</i>"
     )
     return "\n".join(lines)
