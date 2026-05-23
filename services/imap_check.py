@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import imaplib
+import os
 from typing import Any
 
 from database import get_imap_last_uid
@@ -152,8 +153,9 @@ def format_imap_report(results: list[dict]) -> str:
             lines.append(f"   <i>{note}</i>")
 
     lines.append(f"\nПроверено: <b>{ok_n}/{len(results)}</b>")
+    poll = int(float(os.getenv("INCOMING_POLL_SEC", "60") or 60))
     lines.append(
-        "\n<i>Основной канал — фоновый IMAP (~20 с): все новые ответы в бот. "
-        "Эта проверка — догон, если письмо не попало в Telegram.</i>"
+        f"\n<i>Авто-канал: imap-worker опрашивает ящики каждые ~{poll} с "
+        f"(INCOMING_POLL_SEC). /imap_check — ручной догон, если авто не сработало.</i>"
     )
     return "\n".join(lines)

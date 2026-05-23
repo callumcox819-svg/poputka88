@@ -11,6 +11,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from database import (
+    find_lead_by_incoming_subject,
     get_lead_for_mailing_recipient,
     get_validated_lead_by_email,
     get_validated_lead_by_id,
@@ -57,6 +58,11 @@ async def resolve_validated_lead(
     lead = await get_validated_lead_by_reply_email(uid, email)
     if lead:
         return LeadResolveResult(lead=lead, matched_by="email_fuzzy")
+
+    if (subject or "").strip():
+        lead = await find_lead_by_incoming_subject(uid, subject)
+        if lead:
+            return LeadResolveResult(lead=lead, matched_by="subject")
 
     lead = await resolve_lead_for_test_reply(
         uid, contact_email=email, subject=subject

@@ -34,7 +34,7 @@ from services.lead_resolve import resolve_validated_lead
 logger = logging.getLogger(__name__)
 
 _worker_task: asyncio.Task | None = None
-POLL_SEC = float(os.getenv("INCOMING_POLL_SEC", os.getenv("INCOMING_MAIL_POLL_SECONDS", "20")))
+POLL_SEC = float(os.getenv("INCOMING_POLL_SEC", os.getenv("INCOMING_MAIL_POLL_SECONDS", "60")))
 MAX_IMAP_CONCURRENT = max(1, int(os.getenv("MAX_IMAP_CONCURRENT", "8")))
 
 
@@ -48,14 +48,27 @@ def _format_price(price: str, currency: str = "") -> str:
     return p
 
 
+async def _default_service_label(user_id: int) -> str:
+    from services.gag_keys import GAG_SERVICE_KEY, normalize_gag_service
+    from services.user_settings import get_setting
+
+    n = normalize_gag_service(await get_setting(user_id, GAG_SERVICE_KEY))
+    return {
+        "tutti_ch": "tutti.ch",
+        "posta_ch": "post.ch",
+        "ricardo_ch": "ricardo.ch",
+    }.get(n or "", "")
+
+
 async def _lead_meta(
     user_id: int, from_email: str, body: str, *, subject: str = ""
 ) -> dict:
+    default_svc = await _default_service_label(user_id)
     resolved = await resolve_validated_lead(
         user_id, contact_email=from_email, subject=subject
     )
     if not resolved:
-        svc = service_label_from_body(body)
+        svc = service_label_from_body(body) or default_svc
         return {
             "lead_id": None,
             "product_title": "",
@@ -65,7 +78,11 @@ async def _lead_meta(
         }
     lead = resolved.lead
     link = (lead.get("item_link") or "").strip()
-    svc = service_label_from_link(link) or service_label_from_body(body)
+    svc = (
+        service_label_from_link(link)
+        or service_label_from_body(body)
+        or default_svc
+    )
     price = _format_price(
         str(lead.get("item_price") or ""),
         str(lead.get("item_currency") or lead.get("currency") or ""),

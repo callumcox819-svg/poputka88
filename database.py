@@ -1444,6 +1444,49 @@ async def find_lead_by_title(user_id: int, title_key: str) -> dict | None:
     return None
 
 
+async def find_lead_by_incoming_subject(user_id: int, subject: str) -> dict | None:
+    """Лид по теме Re: <товар> (если email продавца другой или не совпал)."""
+    from services.fixture_fields import subject_stripped_title
+    from services.lead_keys import title_match_key
+
+    needle = subject_stripped_title(subject).strip()
+    if len(needle) < 4:
+        return None
+
+    hit = await find_lead_by_title(user_id, title_match_key(needle))
+    if hit:
+        return hit
+
+    nl = needle.lower()
+    for prefix in ("anfrage zu ", "anfrage: ", "anfrage "):
+        if nl.startswith(prefix):
+            nl = nl[len(prefix) :].strip()
+            break
+
+    async with db_connect() as db:
+        cur = await db.execute(
+            """
+            SELECT * FROM validated_leads
+            WHERE user_id = ? ORDER BY id DESC LIMIT 2500
+            """,
+            (user_id,),
+        )
+        rows = [r.as_dict() for r in await cur.fetchall()]
+
+    best: dict | None = None
+    best_len = 0
+    for lead in rows:
+        title = (lead.get("item_title") or "").strip()
+        if not title or len(title) < 4:
+            continue
+        tl = title.lower()
+        if nl == tl or (len(tl) >= 10 and tl in nl) or (len(nl) >= 10 and nl in tl):
+            if len(title) > best_len:
+                best = lead
+                best_len = len(title)
+    return best
+
+
 async def find_lead_by_seller_key(user_id: int, seller_key: str) -> dict | None:
     skey = (seller_key or "").strip().lower()
     if not skey:

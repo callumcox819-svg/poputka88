@@ -91,15 +91,20 @@ async def _start_imap_on_bot_if_needed(bot: Bot, *, mailbox_count: int = 0) -> N
     """IMAP на боте только если нет отдельного imap-worker (см. RAILWAY_IMAP_WORKER.txt)."""
     if not _env_truthy("ENABLE_INCOMING_MAIL"):
         logger.warning(
-            "IMAP в bot.py ВЫКЛЮЧЕН (%s ящик(ов) в БД). Входящие: отдельный сервис "
-            "python imap_worker.py + ENABLE_INCOMING_MAIL=1",
+            "Авто-входящие ВЫКЛ на bot.py (%s ящ. в БД). Без /imap_check письма не придут, "
+            "пока не запущен imap-worker: python imap_worker.py + ENABLE_INCOMING_MAIL=1 "
+            "(опрос ~%ss, см. RAILWAY_IMAP_WORKER.txt)",
             mailbox_count,
+            POLL_SEC,
         )
         return
     if _env_truthy("IMAP_DEDICATED_WORKER"):
-        logger.info(
-            "IMAP в bot.py отключён (IMAP_DEDICATED_WORKER=1) — %s ящик(ов) на imap-worker",
+        logger.warning(
+            "Авто-входящие на bot.py выключены (IMAP_DEDICATED_WORKER=1). "
+            "Должен работать сервис imap-worker — %s ящ., опрос ~%ss. "
+            "Иначе только /imap_check.",
             mailbox_count,
+            POLL_SEC,
         )
         return
 
