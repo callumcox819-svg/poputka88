@@ -593,6 +593,29 @@ async def mark_account_smtp_blocked(
         return cur.rowcount > 0
 
 
+async def toggle_smtp_account_enabled(user_id: int, account_id: int) -> int | None:
+    """Переключить enabled (IMAP/ящик в боте). Возвращает новое значение 0/1 или None."""
+    async with db_connect() as db:
+        cur = await db.execute(
+            "SELECT enabled FROM smtp_accounts WHERE id = ? AND user_id = ?",
+            (account_id, user_id),
+        )
+        row = await cur.fetchone()
+        if not row:
+            return None
+        new_val = 0 if int(row[0] or 0) else 1
+        await db.execute(
+            """
+            UPDATE smtp_accounts
+            SET enabled = ?
+            WHERE id = ? AND user_id = ?
+            """,
+            (new_val, account_id, user_id),
+        )
+        await db.commit()
+        return new_val
+
+
 async def disable_account_fully(
     user_id: int, account_id: int, reason: str
 ) -> bool:

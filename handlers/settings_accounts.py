@@ -1,4 +1,4 @@
-"""📧 Почтовые аккаунты — список и обслуживание."""
+"""📧 Почтовые аккаунты — список, тумблеры вкл/выкл, обслуживание."""
 
 from __future__ import annotations
 
@@ -14,6 +14,7 @@ from database import (
     delete_inactive_smtp_accounts,
     delete_smtp_account,
     list_all_smtp_accounts,
+    toggle_smtp_account_enabled,
 )
 from services.account_status_check import check_accounts_status_parallel
 from utils.bg_jobs import is_running as bg_is_running, start as bg_start
@@ -26,27 +27,49 @@ logger = logging.getLogger(__name__)
 PAGE_SIZE = 10
 
 
-def _account_emoji(acc: dict) -> str:
+def _status_emoji(acc: dict) -> str:
+    """Статус проверки (не путать с тумблером вкл/выкл)."""
     if not int(acc.get("enabled", 1)):
-        return "🔴"
+        return "⏸"
     if not int(acc.get("smtp_enabled", 1)):
         return "🟡"
-    return "📧"
+    return "🟢"
+
+
+def _email_label(acc: dict) -> str:
+    em = (acc.get("email") or "").strip()
+    if len(em) > 24:
+        em = em[:22] + "…"
+    return f"{_status_emoji(acc)} {em}"
+
+
+def _toggle_button(acc: dict, page: int) -> InlineKeyboardButton:
+    aid = int(acc["id"])
+    if int(acc.get("enabled", 1)):
+        return InlineKeyboardButton(
+            text="🟢 Вкл",
+            callback_data=f"acc_toggle:{aid}:{page}",
+        )
+    return InlineKeyboardButton(
+        text="🔴 Выкл",
+        callback_data=f"acc_toggle:{aid}:{page}",
+    )
 
 
 def _accounts_kb(accounts: list[dict], page: int, total_pages: int) -> InlineKeyboardMarkup:
     rows: list[list[InlineKeyboardButton]] = []
     for acc in accounts:
-        tag = _account_emoji(acc)
+        aid = int(acc["id"])
         rows.append(
             [
                 InlineKeyboardButton(
-                    text=f"{tag} {acc['email']}",
-                    callback_data=f"acc_info:{acc['id']}",
+                    text=_email_label(acc),
+                    callback_data=f"acc_info:{aid}",
                 ),
+                _toggle_button(acc, page),
                 InlineKeyboardButton(
                     text="🗑",
-                    callback_data=f"acc_del:{acc['id']}:{page}",
+                    callback_data=f"acc_del:{aid}:{page}",
                 ),
             ]
         )
@@ -103,7 +126,7 @@ async def render_accounts_menu(target: CallbackQuery, user_id: int, page: int = 
     start = (page - 1) * PAGE_SIZE
     page_accounts = all_acc[start : start + PAGE_SIZE]
 
-    active = sum(1 for a in all_acc if int(a.get("enabled", 1)))
+    imap_on = sum(1 for a in all_acc if int(a.get("enabled", 1)))
     smtp_ok = sum(
         1 for a in all_acc if int(a.get("enabled", 1)) and int(a.get("smtp_enabled", 1))
     )
@@ -111,12 +134,13 @@ async def render_accounts_menu(target: CallbackQuery, user_id: int, page: int = 
     if total:
         text = (
             f"📬 <b>Почтовые аккаунты</b>\n\n"
-            f"Всего: <b>{total}</b> · активных IMAP: <b>{active}</b> · SMTP OK: <b>{smtp_ok}</b>\n"
+            f"Всего: <b>{total}</b> · IMAP вкл: <b>{imap_on}</b> · SMTP OK: <b>{smtp_ok}</b>\n"
             f"Страница <b>{page}/{total_pages}</b>\n\n"
-            "🔴 — отключён (неверный пароль)\n"
-            "🟡 — только IMAP (SMTP заблокирован)\n"
-            "📧 — рассылка и входящие\n\n"
-            "🗑 справа — удалить один ящик."
+            "<b>Слева от почты:</b>\n"
+            "🟢 — SMTP OK · 🟡 — только IMAP (SMTP блок) · ⏸ — ящик выключен тумблером\n\n"
+            "<b>Тумблер:</b> 🟢 Вкл / 🔴 Выкл — опрос IMAP и участие в рассылке\n"
+            "🗑 — удалить ящик\n\n"
+            "После «🔍 Проверить статус» цвета обновятся."
         )
     else:
         text = (
@@ -143,6 +167,24 @@ async def acc_page(callback: CallbackQuery) -> None:
     await callback.answer()
 
 
+@router.callback_query(F.data.startswith("acc_toggle:"))
+async def acc_toggle(callback: CallbackQuery) -> None:
+    parts = (callback.data or "").split(":")
+    try:
+        acc_id = int(parts[1])
+        page = int(parts[2]) if len(parts) > 2 else 1
+    except (IndexError, ValueError):
+        return await callback.answer("Ошибка", show_alert=True)
+
+    new_val = await toggle_smtp_account_enabled(callback.from_user.id, acc_id)
+    if new_val is None:
+        return await callback.answer("Не найдено", show_alert=True)
+
+    hint = "включён (IMAP + рассылка)" if new_val else "выключён"
+    await callback.answer(f"Ящик {hint}", show_alert=False)
+    await render_accounts_menu(callback, callback.from_user.id, page=page)
+
+
 @router.callback_query(F.data.startswith("acc_del:"))
 async def acc_del(callback: CallbackQuery) -> None:
     parts = (callback.data or "").split(":")
@@ -158,7 +200,28 @@ async def acc_del(callback: CallbackQuery) -> None:
 
 @router.callback_query(F.data.startswith("acc_info:"))
 async def acc_info(callback: CallbackQuery) -> None:
-    await callback.answer("Нажмите 🗑 справа, чтобы удалить.", show_alert=False)
+    try:
+        acc_id = int((callback.data or "").split(":", 1)[1])
+    except (IndexError, ValueError):
+        return await callback.answer("Ошибка", show_alert=True)
+
+    uid = callback.from_user.id
+    accs = await list_all_smtp_accounts(uid)
+    acc = next((a for a in accs if int(a.get("id") or 0) == acc_id), None)
+    if not acc:
+        return await callback.answer("Не найдено", show_alert=True)
+
+    en = int(acc.get("enabled", 1))
+    smtp = int(acc.get("smtp_enabled", 1))
+    err = (acc.get("last_error") or "").strip()
+    lines = [
+        f"<code>{e(acc.get('email') or '')}</code>",
+        f"IMAP/ящик: <b>{'вкл' if en else 'выкл'}</b>",
+        f"SMTP: <b>{'OK' if smtp and en else 'блок/выкл'}</b>",
+    ]
+    if err:
+        lines.append(f"Ошибка: <code>{e(err[:200])}</code>")
+    await callback.answer("\n".join(lines), show_alert=True)
 
 
 @router.callback_query(F.data == "acc_delete_inactive")
@@ -166,7 +229,7 @@ async def acc_delete_inactive(callback: CallbackQuery) -> None:
     n = await delete_inactive_smtp_accounts(callback.from_user.id)
     if not n:
         await callback.answer(
-            "Нет неактивных (🔴). Ящики с 🟡 SMTP-block не удаляются.",
+            "Нет выключенных (🔴 Выкл / ⏸). Ящики с 🟡 SMTP-block не удаляются.",
             show_alert=True,
         )
     else:
