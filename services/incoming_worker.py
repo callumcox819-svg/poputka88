@@ -48,27 +48,34 @@ def _format_price(price: str, currency: str = "") -> str:
     return p
 
 
-async def _default_service_label(user_id: int) -> str:
-    from services.gag_keys import GAG_SERVICE_KEY, normalize_gag_service
-    from services.user_settings import get_setting
+async def _lead_link(lead: dict) -> str:
+    link = (lead.get("item_link") or "").strip()
+    if link:
+        return link
+    raw = (lead.get("raw_json") or "").strip()
+    if not raw:
+        return ""
+    try:
+        import json
 
-    n = normalize_gag_service(await get_setting(user_id, GAG_SERVICE_KEY))
-    return {
-        "tutti_ch": "tutti.ch",
-        "posta_ch": "post.ch",
-        "ricardo_ch": "ricardo.ch",
-    }.get(n or "", "")
+        data = json.loads(raw)
+        if isinstance(data, dict):
+            return str(
+                data.get("item_link") or data.get("link") or data.get("url") or ""
+            ).strip()
+    except json.JSONDecodeError:
+        pass
+    return ""
 
 
 async def _lead_meta(
     user_id: int, from_email: str, body: str, *, subject: str = ""
 ) -> dict:
-    default_svc = await _default_service_label(user_id)
     resolved = await resolve_validated_lead(
         user_id, contact_email=from_email, subject=subject
     )
     if not resolved:
-        svc = service_label_from_body(body) or default_svc
+        svc = service_label_from_body(body)
         return {
             "lead_id": None,
             "product_title": "",
@@ -77,12 +84,8 @@ async def _lead_meta(
             "offer_price": "",
         }
     lead = resolved.lead
-    link = (lead.get("item_link") or "").strip()
-    svc = (
-        service_label_from_link(link)
-        or service_label_from_body(body)
-        or default_svc
-    )
+    link = await _lead_link(lead)
+    svc = service_label_from_link(link) or service_label_from_body(body)
     price = _format_price(
         str(lead.get("item_price") or ""),
         str(lead.get("item_currency") or lead.get("currency") or ""),

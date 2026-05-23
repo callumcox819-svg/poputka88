@@ -51,3 +51,29 @@ def subject_stripped_title(subject: str) -> str:
         else:
             break
     return s.strip()
+
+
+def normalize_incoming_subject(subject: str) -> str:
+    """Тема ответа продавца → ядро названия товара для поиска лида."""
+    s = subject_stripped_title(subject).strip()
+    if not s:
+        return ""
+    low = s.lower()
+    for prefix in ("anfrage zu ", "anfrage: ", "anfrage ", "betreff: "):
+        if low.startswith(prefix):
+            s = s[len(prefix) :].strip()
+            low = s.lower()
+            break
+    for suffix in (
+        " noch verfuegbar?",
+        " noch verfügbar?",
+        " noch verfugbar?",
+        " noch zu haben",
+        " noch verfügbar",
+        " still available?",
+        " still available",
+    ):
+        if low.endswith(suffix):
+            s = s[: -len(suffix)].strip()
+            low = s.lower()
+    return s.strip()

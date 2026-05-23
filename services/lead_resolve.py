@@ -12,6 +12,7 @@ from dataclasses import dataclass
 
 from database import (
     find_lead_by_incoming_subject,
+    find_lead_by_recent_mailing,
     get_lead_for_mailing_recipient,
     get_validated_lead_by_email,
     get_validated_lead_by_id,
@@ -58,6 +59,12 @@ async def resolve_validated_lead(
     lead = await get_validated_lead_by_reply_email(uid, email)
     if lead:
         return LeadResolveResult(lead=lead, matched_by="email_fuzzy")
+
+    lead = await find_lead_by_recent_mailing(
+        uid, contact_email=email, subject=subject
+    )
+    if lead:
+        return LeadResolveResult(lead=lead, matched_by="mailing_subject")
 
     if (subject or "").strip():
         lead = await find_lead_by_incoming_subject(uid, subject)

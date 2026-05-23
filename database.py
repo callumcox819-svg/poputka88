@@ -1446,10 +1446,10 @@ async def find_lead_by_title(user_id: int, title_key: str) -> dict | None:
 
 async def find_lead_by_incoming_subject(user_id: int, subject: str) -> dict | None:
     """Лид по теме Re: <товар> (если email продавца другой или не совпал)."""
-    from services.fixture_fields import subject_stripped_title
+    from services.fixture_fields import normalize_incoming_subject
     from services.lead_keys import title_match_key
 
-    needle = subject_stripped_title(subject).strip()
+    needle = normalize_incoming_subject(subject)
     if len(needle) < 4:
         return None
 
@@ -1458,10 +1458,6 @@ async def find_lead_by_incoming_subject(user_id: int, subject: str) -> dict | No
         return hit
 
     nl = needle.lower()
-    for prefix in ("anfrage zu ", "anfrage: ", "anfrage "):
-        if nl.startswith(prefix):
-            nl = nl[len(prefix) :].strip()
-            break
 
     async with db_connect() as db:
         cur = await db.execute(
@@ -1480,11 +1476,67 @@ async def find_lead_by_incoming_subject(user_id: int, subject: str) -> dict | No
         if not title or len(title) < 4:
             continue
         tl = title.lower()
-        if nl == tl or (len(tl) >= 10 and tl in nl) or (len(nl) >= 10 and nl in tl):
+        if nl == tl or (len(tl) >= 8 and tl in nl) or (len(nl) >= 8 and nl in tl):
             if len(title) > best_len:
                 best = lead
                 best_len = len(title)
     return best
+
+
+async def find_lead_by_recent_mailing(
+    user_id: int, *, contact_email: str = "", subject: str = ""
+) -> dict | None:
+    """Лид из недавней рассылки: email получателя или тема ≈ item_title."""
+    from services.fixture_fields import normalize_incoming_subject
+
+    email = (contact_email or "").strip().lower()
+    subj_needle = normalize_incoming_subject(subject).lower()
+
+    async with db_connect() as db:
+        cur = await db.execute(
+            """
+            SELECT vl.*, r.email AS rcpt_email
+            FROM recipients r
+            JOIN campaigns c ON c.id = r.campaign_id
+            LEFT JOIN validated_leads vl ON vl.id = COALESCE(
+                r.lead_id,
+                (SELECT id FROM validated_leads
+                 WHERE user_id = c.user_id AND email = r.email LIMIT 1)
+            )
+            WHERE c.user_id = ? AND r.status = 'sent' AND vl.id IS NOT NULL
+            ORDER BY r.sent_at DESC, r.id DESC
+            LIMIT 400
+            """,
+            (user_id,),
+        )
+        rows = [r.as_dict() for r in await cur.fetchall()]
+
+    if email:
+        for row in rows:
+            rcpt = (row.get("rcpt_email") or "").strip().lower()
+            vl_em = (row.get("email") or "").strip().lower()
+            if rcpt == email or vl_em == email:
+                return {k: v for k, v in row.items() if k != "rcpt_email"}
+
+    if len(subj_needle) >= 4:
+        best: dict | None = None
+        best_len = 0
+        for row in rows:
+            title = (row.get("item_title") or "").strip()
+            if not title:
+                continue
+            tl = title.lower()
+            if (
+                subj_needle == tl
+                or (len(tl) >= 8 and tl in subj_needle)
+                or (len(subj_needle) >= 8 and subj_needle in tl)
+            ):
+                if len(title) > best_len:
+                    best = {k: v for k, v in row.items() if k != "rcpt_email"}
+                    best_len = len(title)
+        if best:
+            return best
+    return None
 
 
 async def find_lead_by_seller_key(user_id: int, seller_key: str) -> dict | None:

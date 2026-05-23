@@ -276,6 +276,8 @@ def is_google_system_mail(from_email: str, from_name: str, subject: str) -> bool
 
 def service_label_from_link(link: str) -> str:
     l = (link or "").lower()
+    if "facebook.com" in l or "fb.com" in l:
+        return "Facebook.com"
     if "ricardo.ch" in l:
         return "ricardo.ch"
     if "tutti.ch" in l:
