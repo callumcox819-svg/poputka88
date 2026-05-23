@@ -14,6 +14,8 @@ from database import (
 )
 from services.encoding import TransferEncoding
 from services.mailing_timing import load_timing
+from services.presets import pick_random_smart_preset
+from services.user_settings import get_bool
 from services.smtp_sender import send_one
 from services.task_control import (
     clear_stop_campaign,
@@ -102,12 +104,20 @@ async def run_campaign(
                 account = accounts[idx]
                 _account_index[user_id] = idx + 1
 
+            body = camp["body"]
+            if await get_bool(user_id, "smart_mode"):
+                smart_body = await pick_random_smart_preset(
+                    user_id, camp["subject"]
+                )
+                if smart_body:
+                    body = smart_body
+
             try:
                 used = await send_one(
                     settings,
                     to_addr=email,
                     subject=camp["subject"],
-                    body=camp["body"],
+                    body=body,
                     is_html=bool(camp["is_html"]),
                     transfer=transfer,
                     account=account,

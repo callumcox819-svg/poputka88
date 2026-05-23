@@ -96,30 +96,6 @@ async def ref_hide(callback: CallbackQuery) -> None:
     await callback.answer()
 
 
-# ——— Пресеты (заглушки с тем же UI) ———
-
-@router.callback_query(F.data == "presets_menu")
-async def presets_menu(callback: CallbackQuery, state: FSMContext) -> None:
-    await state.clear()
-    await cq_edit_text(
-        callback,
-        "🧾 <b>Пресеты</b>\n\nРаздел подключим в следующем обновлении.",
-        reply_markup=back_settings_kb(),
-    )
-    await callback.answer()
-
-
-@router.callback_query(F.data == "smart_presets_menu")
-async def smart_presets_menu(callback: CallbackQuery, state: FSMContext) -> None:
-    await state.clear()
-    await cq_edit_text(
-        callback,
-        "📄 <b>Умные пресеты</b>\n\nРаздел подключим в следующем обновлении.",
-        reply_markup=back_settings_kb(),
-    )
-    await callback.answer()
-
-
 @router.callback_query(F.data == "settings_proxies")
 async def settings_proxies(callback: CallbackQuery, state: FSMContext) -> None:
     await state.clear()
