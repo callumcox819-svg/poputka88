@@ -1165,6 +1165,79 @@ async def list_validated_emails(user_id: int, *, limit: int = 10000) -> list[str
         return [str(r[0]) for r in await cur.fetchall()]
 
 
+async def count_already_sent_mailing_emails(user_id: int) -> int:
+    """Сколько адресов из validated_leads уже получили письмо (status=sent) в любой кампании."""
+    async with db_connect() as db:
+        cur = await db.execute(
+            """
+            SELECT COUNT(DISTINCT lower(vl.email))
+            FROM validated_leads vl
+            WHERE vl.user_id = ?
+              AND EXISTS (
+                SELECT 1 FROM recipients r
+                JOIN campaigns c ON c.id = r.campaign_id
+                WHERE c.user_id = vl.user_id
+                  AND lower(r.email) = lower(vl.email)
+                  AND r.status = 'sent'
+              )
+            """,
+            (user_id,),
+        )
+        row = await cur.fetchone()
+        return int(row[0]) if row else 0
+
+
+async def list_validated_emails_pending_mailing(
+    user_id: int, *, limit: int = 10000
+) -> list[str]:
+    """Email из validated_leads, которым ещё не слали (ни в одной кампании)."""
+    async with db_connect() as db:
+        cur = await db.execute(
+            """
+            SELECT vl.email FROM validated_leads vl
+            WHERE vl.user_id = ?
+              AND NOT EXISTS (
+                SELECT 1 FROM recipients r
+                JOIN campaigns c ON c.id = r.campaign_id
+                WHERE c.user_id = vl.user_id
+                  AND lower(r.email) = lower(vl.email)
+                  AND r.status = 'sent'
+              )
+            ORDER BY vl.id DESC
+            LIMIT ?
+            """,
+            (user_id, limit),
+        )
+        return [str(r[0]) for r in await cur.fetchall()]
+
+
+async def get_latest_paused_campaign(user_id: int) -> dict | None:
+    async with db_connect() as db:
+        cur = await db.execute(
+            """
+            SELECT * FROM campaigns
+            WHERE user_id = ? AND status = 'paused'
+            ORDER BY id DESC LIMIT 1
+            """,
+            (user_id,),
+        )
+        row = await cur.fetchone()
+        return row.as_dict() if row else None
+
+
+async def count_pending_recipients(campaign_id: int) -> int:
+    async with db_connect() as db:
+        cur = await db.execute(
+            """
+            SELECT COUNT(*) FROM recipients
+            WHERE campaign_id = ? AND status = 'pending'
+            """,
+            (campaign_id,),
+        )
+        row = await cur.fetchone()
+        return int(row[0]) if row else 0
+
+
 async def get_lead_for_mailing_recipient(
     user_id: int,
     contact_email: str,

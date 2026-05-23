@@ -9,10 +9,15 @@ from aiogram.types import Message
 from config import Settings
 from database import (
     add_recipients,
+    count_already_sent_mailing_emails,
+    count_pending_recipients,
+    count_validated_leads,
     create_campaign,
+    get_latest_paused_campaign,
     get_running_campaign,
     list_smtp_mailing_accounts,
-    list_validated_emails,
+    list_validated_emails_pending_mailing,
+    set_campaign_status,
 )
 from handlers.mailing import launch_campaign
 from keyboards.main_menu import main_keyboard
@@ -36,7 +41,7 @@ async def start_mailing_from_validated_db(
     settings: Settings,
     bot: Bot,
 ) -> None:
-    """Создать кампанию из validated_leads и сразу запустить."""
+    """Продолжить paused-кампанию или новая только по ещё не отправленным адресам."""
     await state.clear()
     uid = message.from_user.id
 
@@ -48,15 +53,46 @@ async def start_mailing_from_validated_db(
         )
         return
 
-    emails = await list_validated_emails(uid)
+    paused = await get_latest_paused_campaign(uid)
+    if paused:
+        pending_n = await count_pending_recipients(int(paused["id"]))
+        if pending_n > 0:
+            await set_campaign_status(int(paused["id"]), "running")
+            sent_before = int(paused.get("sent") or 0)
+            total = int(paused.get("total") or 0)
+            await message.answer(
+                f"▶️ <b>Продолжаю рассылку #{paused['id']}</b>\n"
+                f"Уже отправлено: <b>{sent_before}</b> / {total}\n"
+                f"Осталось в очереди: <b>{pending_n}</b>\n"
+                f"<i>Повторно на уже получивших не шлём.</i>",
+                parse_mode="HTML",
+                reply_markup=main_keyboard(),
+            )
+            await launch_campaign(
+                message, settings, bot, int(paused["id"]), user_id=uid
+            )
+            return
+
+    total_leads = await count_validated_leads(uid)
+    already_sent = await count_already_sent_mailing_emails(uid)
+    emails = await list_validated_emails_pending_mailing(uid)
+
     if not emails:
-        await message.answer(
-            "📭 <b>Нет валидных email в БД</b>\n\n"
-            "Загрузите JSON void-parser — подбор сохранит адреса.\n"
-            "Потом снова /send или ▶️ Запустить рассылку.",
-            parse_mode="HTML",
-            reply_markup=main_keyboard(),
-        )
+        if total_leads > 0 and already_sent >= total_leads:
+            await message.answer(
+                f"✅ Всем <b>{total_leads}</b> валидным адресам из БД уже отправляли.\n"
+                "Новый JSON / подбор — чтобы добавить новых получателей.",
+                parse_mode="HTML",
+                reply_markup=main_keyboard(),
+            )
+        else:
+            await message.answer(
+                "📭 <b>Нет валидных email в БД</b>\n\n"
+                "Загрузите JSON void-parser — подбор сохранит адреса.\n"
+                "Потом снова /send или ▶️ Запустить рассылку.",
+                parse_mode="HTML",
+                reply_markup=main_keyboard(),
+            )
         return
 
     accounts = await list_smtp_mailing_accounts(uid)
@@ -72,7 +108,7 @@ async def start_mailing_from_validated_db(
 
     if len(emails) > settings.max_recipients:
         await message.answer(
-            f"⚠️ В БД <b>{len(emails)}</b> email, лимит кампании "
+            f"⚠️ К отправке <b>{len(emails)}</b> новых адресов, лимит кампании "
             f"<b>{settings.max_recipients}</b>.\n"
             "Будут взяты первые по дате валидации.",
             parse_mode="HTML",
@@ -89,11 +125,18 @@ async def start_mailing_from_validated_db(
     )
     n = await add_recipients(cid, emails)
 
+    skip_line = ""
+    if already_sent > 0:
+        skip_line = (
+            f"\n⏭ Уже получали письмо ранее: <b>{already_sent}</b> "
+            f"(из {total_leads} в БД) — в эту кампанию не включены."
+        )
+
     await message.answer(
         f"▶️ <b>Рассылка #{cid}</b>\n"
-        f"Получателей из БД: <b>{n}</b>\n"
+        f"Новых получателей: <b>{n}</b>\n"
         f"Тема: название товара из валидации\n"
-        f"SMTP-аккаунтов: <b>{len(accounts)}</b>",
+        f"SMTP-аккаунтов: <b>{len(accounts)}</b>{skip_line}",
         parse_mode="HTML",
         reply_markup=main_keyboard(),
     )
