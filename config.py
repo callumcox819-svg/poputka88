@@ -17,7 +17,7 @@ VALIDEMAIL_API_KEY = "9aad847a33da60eee069cb4b2160f2a4"  # 1-й ключ validem
 
 VALIDEMAIL_API_KEY_2 = "c536a8c9a22a8a32939c084c866330b4"  # 2-й ключ validemail.co
 
-DEEPL_API_KEY = ""  # DeepL для кнопки «Перевести» (или DEEPL_API_KEY в Variables)
+DEEPL_API_KEY = "sk-9c1e22408a3c43b69f01978b023fbda0"  # DeepL для кнопки «Перевести» (или DEEPL_API_KEY в Variables)
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # Не очищайте строки выше при правках config.py — только Settings/load_settings ниже.
