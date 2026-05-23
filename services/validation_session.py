@@ -122,6 +122,19 @@ async def _edit_status(bot: Bot, session: ValidationSession, *, finished: bool =
         pass
 
 
+def _drain_validation_queue(session: ValidationSession) -> int:
+    """Снять необработанные объявления с очереди (иначе queue.join() зависает навсегда)."""
+    dropped = 0
+    while True:
+        try:
+            session.queue.get_nowait()
+        except asyncio.QueueEmpty:
+            break
+        session.queue.task_done()
+        dropped += 1
+    return dropped
+
+
 async def _progress_updater(bot: Bot, session: ValidationSession) -> None:
     while not session.stop_updater.is_set():
         await _edit_status(bot, session, finished=False)
@@ -201,13 +214,30 @@ async def _worker(bot: Bot, settings: Settings, session: ValidationSession) -> N
             session.queue.task_done()
 
             if session.stats.fatal_reason:
+                logger.warning(
+                    "validation stopped (fatal=%s) user_id=%s processed=%s/%s",
+                    session.stats.fatal_reason,
+                    session.user_id,
+                    session.stats.processed,
+                    session.stats.total,
+                )
                 break
 
+        dropped = _drain_validation_queue(session)
+        if dropped:
+            logger.info(
+                "validation queue drained %s items user_id=%s (stopped=%s fatal=%s)",
+                dropped,
+                session.user_id,
+                session.stats.stopped,
+                session.stats.fatal_reason,
+            )
         await session.queue.join()
     except Exception:
         logger.exception("validation worker user_id=%s", session.user_id)
         await bot.send_message(session.chat_id, "❌ Ошибка валидации. Смотрите логи.")
     finally:
+        _drain_validation_queue(session)
         session.stop_updater.set()
         if session.updater_task:
             session.updater_task.cancel()

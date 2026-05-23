@@ -129,6 +129,12 @@ async def process_validation_item(
             stats.errors += 1
             stats.fatal_reason = fatal
             stats.stopped = True
+        logger.warning(
+            "ValidEmail fatal %s for local=%s user_id=%s",
+            fatal,
+            local,
+            session.user_id,
+        )
         return
 
     if found_email:
