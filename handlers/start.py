@@ -1,9 +1,9 @@
-from aiogram import Bot, Router
+from aiogram import Router
 from aiogram.filters import Command, CommandStart
 from aiogram.types import Message
 
 from keyboards.main_menu import main_keyboard
-from services.bot_commands import BOTFATHER_COMMANDS_TEXT, register_bot_commands
+from services.bot_commands import BOTFATHER_COMMANDS_TEXT
 
 router = Router()
 
@@ -20,11 +20,7 @@ WELCOME = (
 
 
 @router.message(CommandStart())
-async def cmd_start(message: Message, bot: Bot) -> None:
-    try:
-        await register_bot_commands(bot, chat_id=message.chat.id)
-    except Exception:
-        pass
+async def cmd_start(message: Message) -> None:
     await message.answer(WELCOME, reply_markup=main_keyboard())
 
 
