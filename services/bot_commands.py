@@ -42,12 +42,9 @@ async def register_bot_commands(bot: Bot, *, chat_id: int | None = None) -> None
     except TelegramRetryAfter as exc:
         wait = int(getattr(exc, "retry_after", 60) or 60)
         logger.warning(
-            "Telegram flood on setMyCommands, retry through %s sec", wait
+            "Пропуск setMyCommands (flood %s сек). Бот работает; команды — в @BotFather.",
+            wait,
         )
-        await asyncio.sleep(min(wait + 2, 120))
-        await bot.set_my_commands(BOT_COMMANDS)
-        await bot.set_chat_menu_button(menu_button=MenuButtonCommands())
-        logger.info("Commands OK (after retry)")
 
 
 # Текст для ручной вставки в @BotFather → /setcommands

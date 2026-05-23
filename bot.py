@@ -25,11 +25,14 @@ async def main() -> None:
     await init_db()
 
     bot = Bot(token=settings.bot_token)
-    try:
-        await register_bot_commands(bot)
-        logger.info("Slash commands + MenuButtonCommands registered")
-    except Exception:
-        logger.exception("Failed to register bot commands — use /commands_help")
+
+    async def _register_commands_bg() -> None:
+        try:
+            await register_bot_commands(bot)
+        except Exception:
+            logger.exception("Failed to register bot commands — use /commands_help")
+
+    asyncio.create_task(_register_commands_bg())
 
     dp = Dispatcher(storage=MemoryStorage())
     dp["settings"] = settings
