@@ -11,8 +11,10 @@ from aiogram.utils.keyboard import InlineKeyboardBuilder
 
 from config import Settings
 from database import (
+    get_gag_generated_link,
     get_incoming_mail,
     get_validated_lead_by_id,
+    inherit_incoming_gag_link,
     save_incoming_gag_link,
     update_incoming_mail_lead_snapshot,
 )
@@ -253,11 +255,18 @@ async def cb_mail_reply_mode(callback: CallbackQuery, state: FSMContext) -> None
         mail = await get_incoming_mail(mail_id, uid)
         if not mail:
             return await callback.answer("Письмо не найдено", show_alert=True)
-        if not (mail.get("generated_link") or "").strip():
+        gag_link = await get_gag_generated_link(
+            uid,
+            incoming_id=mail_id,
+            seller_email=mail.get("from_email"),
+        )
+        if not (gag_link or "").strip():
             return await callback.answer(
                 "Сначала «🔗 Создать ссылку» — без неё HTML не отправляется.",
                 show_alert=True,
             )
+        if not (mail.get("generated_link") or "").strip():
+            await inherit_incoming_gag_link(mail_id, uid, mail.get("from_email") or "")
         to_em = (mail.get("from_email") or "").strip()
         html_text = (
             "🧩 <b>HTML</b>\n\n"
@@ -312,10 +321,17 @@ async def cb_mail_reply_html(callback: CallbackQuery, settings: Settings, state:
     mail = await get_incoming_mail(mail_id, uid)
     if not mail:
         return await callback.answer("Письмо не найдено", show_alert=True)
-    if not (mail.get("generated_link") or "").strip():
+    gag_link = await get_gag_generated_link(
+        uid,
+        incoming_id=mail_id,
+        seller_email=mail.get("from_email"),
+    )
+    if not (gag_link or "").strip():
         return await callback.answer(
             "Сначала «🔗 Создать ссылку»", show_alert=True
         )
+    if not (mail.get("generated_link") or "").strip():
+        await inherit_incoming_gag_link(mail_id, uid, mail.get("from_email") or "")
 
     if bg_is_running(uid, "smtp"):
         return await callback.answer("⏳ Отправка уже идёт…", show_alert=True)
@@ -551,6 +567,29 @@ async def cb_goo_mail(callback: CallbackQuery) -> None:
         if not mail or not msg:
             return
         contact = (mail.get("from_email") or "").strip().lower()
+        existing = await get_gag_generated_link(
+            uid, incoming_id=mail_id, seller_email=contact
+        )
+        if (existing or "").strip():
+            await inherit_incoming_gag_link(mail_id, uid, contact)
+            mail2 = await get_incoming_mail(mail_id, uid)
+            if mail2 and msg:
+                text, kb = build_card_from_mail_row(mail2)
+                try:
+                    await msg.edit_text(
+                        text,
+                        reply_markup=kb,
+                        parse_mode="HTML",
+                        disable_web_page_preview=True,
+                    )
+                except Exception:
+                    pass
+                await bot.send_message(
+                    msg.chat.id,
+                    "ℹ️ Ссылка для этого продавца уже была — использую её.",
+                    reply_to_message_id=msg.message_id,
+                )
+            return
         try:
             await create_gag_link_for_incoming(
                 uid,

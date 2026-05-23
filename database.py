@@ -1854,6 +1854,47 @@ async def get_gag_generated_link(
     return None
 
 
+async def inherit_incoming_gag_link(
+    incoming_id: int,
+    user_id: int,
+    from_email: str,
+) -> bool:
+    """Скопировать GAG-ссылку с предыдущего письма того же продавца на новое."""
+    em = (from_email or "").strip().lower()
+    if not em or not incoming_id:
+        return False
+    async with db_connect() as db:
+        cur = await db.execute(
+            """
+            SELECT generated_link, gag_ad_id FROM incoming_mails
+            WHERE user_id = ? AND from_email = ? AND id != ?
+              AND TRIM(COALESCE(generated_link, '')) != ''
+            ORDER BY id DESC
+            LIMIT 1
+            """,
+            (user_id, em, int(incoming_id)),
+        )
+        row = await cur.fetchone()
+        if not row or not row[0]:
+            return False
+        link = str(row[0]).strip()
+        ad_id = str(row[1] or "").strip() if len(row) > 1 else ""
+        cur2 = await db.execute(
+            """
+            UPDATE incoming_mails SET
+                generated_link = ?,
+                gag_ad_id = ?,
+                generation_status = 'ok',
+                generation_error = ''
+            WHERE id = ? AND user_id = ?
+              AND TRIM(COALESCE(generated_link, '')) = ''
+            """,
+            (link[:2000], ad_id[:64], int(incoming_id), user_id),
+        )
+        await db.commit()
+        return bool(cur2.rowcount)
+
+
 async def get_incoming_mail(incoming_id: int, user_id: int) -> dict | None:
     async with db_connect() as db:
         cur = await db.execute(

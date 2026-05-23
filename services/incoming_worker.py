@@ -19,6 +19,7 @@ from database import (
     list_imap_poll_accounts,
     list_incoming_pending_notify,
     set_imap_last_uid,
+    inherit_incoming_gag_link,
     set_incoming_mail_tg_message,
 )
 from services.imap_fetch import (
@@ -254,6 +255,8 @@ async def _process_account(
                 mail_id = await get_incoming_mail_id_by_uid(acc_id, uid) or 0
             if not mail_id:
                 continue
+
+        await inherit_incoming_gag_link(mail_id, user_id, from_email)
 
         logger.info(
             "IMAP incoming → TG user_id=%s inbox=%s FROM %s subj=%r",

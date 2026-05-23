@@ -6,7 +6,7 @@ import re
 from dataclasses import dataclass
 
 from config import Settings
-from database import get_incoming_mail, get_smtp_account
+from database import get_gag_generated_link, get_incoming_mail, get_smtp_account
 from services.gag_keys import GAG_SERVICE_KEY, is_valid_gag_service
 from services.html_reply import build_incoming_html_ctx
 from services.html_spoof import HtmlOutboundError, get_mandatory_spoof_subject
@@ -55,7 +55,14 @@ async def build_incoming_html_body(
     if not mail:
         return None, "Письмо не найдено", IncomingHtmlSendResult(ok=False, error="Письмо не найдено")
 
-    gag_link = (mail.get("generated_link") or "").strip()
+    gag_link = (
+        await get_gag_generated_link(
+            user_id,
+            incoming_id=mail_id,
+            seller_email=mail.get("from_email"),
+        )
+        or ""
+    ).strip()
     if not gag_link:
         return (
             None,
