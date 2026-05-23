@@ -35,10 +35,16 @@ def _format_keyboard():
 
 
 async def begin_new_campaign(message: Message, state: FSMContext) -> None:
+    from services.subject_offer import MAILING_SUBJECT_OFFER
+
     await state.clear()
-    await state.set_state(NewCampaign.subject)
+    await state.update_data(subject=MAILING_SUBJECT_OFFER)
+    await state.set_state(NewCampaign.body)
     await message.answer(
-        "Новая рассылка.\nТема письма:",
+        "Новая рассылка.\n"
+        "Тема при отправке: <code>OFFER</code> — название товара продавца из валидации.\n\n"
+        "Текст письма:",
+        parse_mode="HTML",
         reply_markup=main_keyboard(),
     )
 
@@ -67,15 +73,6 @@ async def cmd_new(message: Message, state: FSMContext) -> None:
     await begin_new_campaign(message, state)
 
 
-@router.message(NewCampaign.subject)
-async def on_subject(message: Message, state: FSMContext) -> None:
-    if is_main_menu_text(message.text):
-        return
-    await state.update_data(subject=message.text or "")
-    await state.set_state(NewCampaign.body)
-    await message.answer("Текст письма:")
-
-
 @router.message(NewCampaign.body)
 async def on_body(message: Message, state: FSMContext) -> None:
     if is_main_menu_text(message.text):
@@ -98,8 +95,19 @@ async def on_format(cb: CallbackQuery, state: FSMContext) -> None:
     data = await state.get_data()
     body = data.get("body", "")
     rec = recommend_encoding(body, is_html=is_html)
+    html_hint = ""
+    if is_html:
+        html_hint = (
+            "\n\n📄 HTML: шаблон из <code>data/HTMLch/</code> по выбранному сервису GAG "
+            "(ТУТТИ / ПОСТ / Ricardo).\n"
+            "В поле «текст» укажите имя файла, например <code>confirmation.html</code> "
+            "или <code>-</code> по умолчанию.\n"
+            "Имя (From) и тема — только из 👤 Имя для спуфинга.\n"
+            "Переменные: <code>{{LINK}}</code> (GAG), <code>{{NICK}}</code>, "
+            "<code>{{ITEM_TITLE}}</code> и др."
+        )
     await cb.message.edit_text(
-        f"Кодировка (Content-Transfer-Encoding):\nРекомендация: {rec}",
+        f"Кодировка (Content-Transfer-Encoding):\nРекомендация: {rec}{html_hint}",
         reply_markup=_encoding_keyboard(),
     )
     await cb.answer()

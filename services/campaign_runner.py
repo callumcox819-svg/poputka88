@@ -13,8 +13,11 @@ from database import (
     pending_recipients,
     set_campaign_status,
 )
+from services.offer_text import apply_offer_to_text
+from services.subject_offer import mailing_subject_for_recipient, offer_title_for_recipient
 from services.encoding import TransferEncoding
 from services.mailing_timing import load_timing
+from services.html_spoof import HtmlOutboundError
 from services.mail_outbound import NoLiveProxyError, live_proxy_count, send_mail
 from services.presets import pick_random_smart_preset
 from services.smtp_block_control import handle_campaign_send_error
@@ -23,6 +26,7 @@ from services.task_control import (
     request_stop_campaign,
     should_stop_campaign,
 )
+from services.html_mailing import render_campaign_html
 from services.user_settings import get_bool
 
 logger = logging.getLogger(__name__)
@@ -85,10 +89,22 @@ async def run_campaign(
             proxy_line = f"\nПрокси SOCKS5: {proxy_live}/{proxy_total} (все живые по очереди)"
         smart_on = await get_bool(user_id, "smart_mode")
         smart_line = "\n🟢 Умный режим: подставляются умные пресеты." if smart_on else ""
+        html_line = ""
+        if is_html:
+            if not proxy_total:
+                await set_campaign_status(campaign_id, "paused")
+                await bot.send_message(
+                    chat_id,
+                    "❌ HTML-рассылка требует SOCKS5-прокси. Добавьте в 🌐 Прокси.",
+                )
+                return
+            html_line = (
+                "\n📄 HTML: шаблон, GAG-ссылка, прокси; тема/имя — 👤 Имя для спуфинга."
+            )
         await bot.send_message(
             chat_id,
             f"Рассылка #{campaign_id} запущена.\n"
-            f"SMTP-аккаунтов: {len(accounts) or 'из .env (1)'}{proxy_line}{smart_line}",
+            f"SMTP-аккаунтов: {len(accounts) or 'из .env (1)'}{proxy_line}{smart_line}{html_line}",
         )
 
         while True:
@@ -136,19 +152,32 @@ async def run_campaign(
                 _account_index[user_id] = idx + 1
 
             body = camp["body"]
-            if smart_on:
-                smart_body = await pick_random_smart_preset(
-                    user_id, camp["subject"]
+            offer_title = await offer_title_for_recipient(user_id, email)
+
+            if is_html:
+                body, html_err = await render_campaign_html(
+                    user_id, camp_body=body, to_email=email
                 )
-                if smart_body:
-                    body = smart_body
+                if html_err:
+                    await mark_failed(campaign_id, email, html_err)
+                    continue
+            else:
+                subject = await mailing_subject_for_recipient(user_id, email)
+                if smart_on:
+                    smart_body = await pick_random_smart_preset(
+                        user_id, offer_title
+                    )
+                    if smart_body:
+                        body = smart_body
+                else:
+                    body = apply_offer_to_text(body, offer_title)
 
             try:
                 used = await send_mail(
                     settings,
                     user_id,
                     to_addr=email,
-                    subject=camp["subject"],
+                    subject=subject,
                     body=body,
                     is_html=is_html,
                     transfer=transfer,
@@ -156,7 +185,7 @@ async def run_campaign(
                 )
                 await mark_sent(campaign_id, email)
                 logger.info("sent %s enc=%s", email, used)
-            except NoLiveProxyError as exc:
+            except (NoLiveProxyError, HtmlOutboundError) as exc:
                 await set_campaign_status(campaign_id, "paused")
                 await bot.send_message(chat_id, f"❌ {exc}")
                 break

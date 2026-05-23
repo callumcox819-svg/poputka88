@@ -13,3 +13,7 @@ class QuickAdd(StatesGroup):
     sender_name = State()
     accounts = State()
 
+
+class MailReply(StatesGroup):
+    waiting_choice = State()
+

@@ -43,6 +43,14 @@ def gag_service_for_api(code: str | None) -> str:
     return n
 
 
+def gag_service_for_html_dir(code: str | None) -> str:
+    """Имя папки в data/HTMLch/ (у ПОСТ — post_ch)."""
+    n = normalize_gag_service(code) or ""
+    if n == "posta_ch":
+        return "post_ch"
+    return n
+
+
 def gag_service_matches(cur: str | None, choice: str) -> bool:
     a = normalize_gag_service(cur)
     b = normalize_gag_service(choice)

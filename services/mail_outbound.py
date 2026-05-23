@@ -55,6 +55,12 @@ async def send_mail(
     )
     configured = await user_has_proxies(uid)
 
+    if is_html and not configured:
+        raise NoLiveProxyError(
+            "HTML-письма отправляются только через SOCKS5-прокси. "
+            "Добавьте прокси в 🌐 Прокси."
+        )
+
     if not configured:
         return await send_one(
             settings,

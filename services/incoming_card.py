@@ -121,21 +121,31 @@ def build_incoming_kb(
     imap_uid: str,
     *,
     mail_id: int | None = None,
+    has_gag_link: bool = False,
 ) -> InlineKeyboardMarkup:
     translate_cb = (
         f"mail_translate:{mail_id}" if mail_id else f"mail_translate_stub:{account_id}:{imap_uid}"
     )
     link_cb = f"goo_mail:{mail_id}" if mail_id else f"goo_link_stub:{account_id}:{imap_uid}"
+    reply_cb = (
+        f"mail_reply:{mail_id}"
+        if mail_id
+        else f"mail_reply_stub:{account_id}:{imap_uid}"
+    )
     rows = [
         [InlineKeyboardButton(text="🌍 Перевести", callback_data=translate_cb)],
         [InlineKeyboardButton(text="🔗 Создать ссылку", callback_data=link_cb)],
-        [
-            InlineKeyboardButton(
-                text="📝 Написать ещё",
-                callback_data=f"mail_reply:{account_id}:{imap_uid}",
-            )
-        ],
+        [InlineKeyboardButton(text="📝 Написать ещё", callback_data=reply_cb)],
     ]
+    if mail_id and has_gag_link:
+        rows.append(
+            [
+                InlineKeyboardButton(
+                    text="🧩 HTML (GO/PUSH/…)",
+                    callback_data=f"mail_html_menu:{mail_id}",
+                )
+            ]
+        )
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
@@ -163,5 +173,6 @@ def build_card_from_mail_row(
         int(mail["account_id"]),
         str(mail.get("imap_uid") or ""),
         mail_id=int(mail["id"]) if mail.get("id") else None,
+        has_gag_link=bool(gen),
     )
     return text, kb

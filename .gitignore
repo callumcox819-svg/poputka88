@@ -2,6 +2,8 @@
 config_local.py
 data/
 !data/.gitkeep
+!data/HTMLch/
+!data/HTMLch/**
 __pycache__/
 *.pyc
 .venv/
