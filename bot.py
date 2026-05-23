@@ -2,6 +2,8 @@ import asyncio
 
 import logging
 
+import os
+
 import sys
 
 
@@ -26,6 +28,10 @@ from middlewares.settings import SettingsMiddleware
 from services.bot_commands import register_bot_commands
 
 from services.incoming_worker import POLL_SEC, start_incoming_mail_worker
+
+
+def _env_truthy(name: str) -> bool:
+    return (os.getenv(name) or "").strip().lower() in {"1", "true", "yes", "on"}
 
 
 
@@ -93,8 +99,33 @@ async def _on_startup(bot: Bot) -> None:
 
         )
 
+    await _start_imap_on_bot_if_needed(bot)
 
 
+async def _start_imap_on_bot_if_needed(bot: Bot) -> None:
+    """IMAP на боте только если нет отдельного imap-worker (см. RAILWAY_IMAP_WORKER.txt)."""
+    if not _env_truthy("ENABLE_INCOMING_MAIL"):
+        logger.warning(
+            "IMAP в bot.py ВЫКЛЮЧЕН. Входящие: отдельный сервис "
+            "python imap_worker.py + ENABLE_INCOMING_MAIL=1"
+        )
+        return
+    if _env_truthy("IMAP_DEDICATED_WORKER"):
+        logger.info(
+            "IMAP в bot.py отключён (IMAP_DEDICATED_WORKER=1) — опрос на сервисе imap-worker"
+        )
+        return
+
+    delay = int(os.getenv("INCOMING_MAIL_START_DELAY_SEC", "30"))
+
+    async def _delayed() -> None:
+        if delay > 0:
+            logger.info("IMAP worker на боте стартует через %ss", delay)
+            await asyncio.sleep(delay)
+        start_incoming_mail_worker(bot)
+        logger.info("Incoming IMAP worker on bot (poll=%ss)", POLL_SEC)
+
+    asyncio.create_task(_delayed())
 
 
 async def _on_error(event) -> None:
@@ -159,10 +190,6 @@ async def main() -> None:
         root.callback_query.middleware(mw)
 
     dp.include_router(root)
-
-
-
-    start_incoming_mail_worker(bot)
 
     logger.info("Bot started")
 

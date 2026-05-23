@@ -1,0 +1,155 @@
+Пошагово: отдельный IMAP-сервер на Railway (проект poputka88)
+=============================================================
+
+Зачем: бот отвечает на кнопки и шлёт SMTP-рассылку, IMAP крутится отдельно —
+много ящиков не тормозят Telegram и валидацию JSON.
+
+Схема (один проект Railway, ДВА сервиса + Postgres):
+
+   [ Postgres ]
+        ↑    ↑
+        │    │
+   [ poputka88 ]     [ imap-worker ]
+   python bot.py     python imap_worker.py
+   Telegram          только IMAP → карточки в чат
+   replicas = 1      replicas = 1
+
+ВАЖНО:
+• Оба сервиса — НЕ python bot.py (будет конфликт Telegram).
+• Второй сервис — ТОЛЬКО: python imap_worker.py
+• Один BOT_TOKEN на оба сервиса — нормально (polling только на poputka88).
+
+
+═══════════════════════════════════════════════════════════════
+ЧАСТЬ A — сервис poputka88 (основной бот)
+═══════════════════════════════════════════════════════════════
+
+1. Открой Railway → проект с Postgres и poputka88.
+
+2. Кликни сервис **poputka88** (GitHub, не Postgres).
+
+3. Вкладка **Settings** → **Deploy**:
+   • **Replicas** = **1** (не 2!)
+   • **Custom Start Command** — пусто ИЛИ:
+         python bot.py
+
+4. Вкладка **Variables** — добавь или измени:
+
+   IMAP_DEDICATED_WORKER = 1
+
+   (это говорит боту: «IMAP не запускай, он на другом сервисе»)
+
+5. Убедись, что на poputka88 НЕТ переменной:
+   ENABLE_INCOMING_MAIL = 1
+   Если есть — удали или поставь 0.
+   (иначе IMAP запустится дважды: на боте и на воркере)
+
+6. Остальные переменные как были:
+   BOT_TOKEN, DATABASE_URL (Reference на Postgres),
+   ADMIN_IDS, VALIDEMAIL_API_KEY, …
+
+7. Нажми **Deploy** / **Redeploy** у poputka88.
+
+8. **Logs** poputka88 — должно быть примерно:
+   • Bot started
+   • IMAP в bot.py отключён (IMAP_DEDICATED_WORKER=1)
+   • Run polling for bot @workaemnaxyibot
+   НЕ должно быть: Incoming IMAP worker started (poll=…)
+
+
+═══════════════════════════════════════════════════════════════
+ЧАСТЬ B — новый сервис imap-worker
+═══════════════════════════════════════════════════════════════
+
+9. На схеме проекта (canvas) нажми **+ Create** → **GitHub Repo**.
+
+10. Выбери ТОТ ЖЕ репозиторий: callumcox819-svg/poputka88 (ветка main).
+
+11. Railway создаст новый сервис. Переименуй:
+    Settings → имя сервиса → **imap-worker**
+
+12. **Settings** → **Deploy** → **Custom Start Command** (именно эта строка):
+
+        python imap_worker.py
+
+13. **Replicas** = **1**
+
+14. **Variables** — скопируй с poputka88 (кнопка Reference / Duplicate):
+
+    BOT_TOKEN              = (тот же, что у бота)
+    DATABASE_URL           = Reference → Postgres (тот же!)
+
+    ENABLE_INCOMING_MAIL   = 1
+
+    MAX_IMAP_CONCURRENT    = 12
+    INCOMING_POLL_SEC      = 20
+    INCOMING_MAIL_START_DELAY_SEC = 10
+
+    ADMIN_IDS              = (как у бота, для seed админов в БД)
+
+    (VALIDEMAIL ключи на imap-worker не обязательны)
+
+15. **Deploy** imap-worker.
+
+16. **Logs** imap-worker — должно быть:
+
+    IMAP worker: @workaemnaxyibot … polling Telegram НЕ запускается
+    Incoming IMAP worker started (poll=20s, total_mailboxes=…)
+    💓 IMAP worker alive #1 mailboxes=…
+
+    Если ошибка «ENABLE_INCOMING_MAIL не задан» → добавь переменную = 1.
+
+
+═══════════════════════════════════════════════════════════════
+ЧАСТЬ C — проверка что всё работает
+═══════════════════════════════════════════════════════════════
+
+17. В Telegram открой бота → /start — меню отвечает быстро.
+
+18. Отправь тестовое письмо или дождись ответа продавца —
+    карточка должна прийти в чат (шлёт imap-worker).
+
+19. Запусти /send (рассылку) — бот не должен «зависать»;
+    в логах poputka88 нет долгих IMAP-строк во время рассылки.
+
+20. ⚙️ → Почтовые аккаунты → «📥 Проверить входящие» — ручной опрос
+    (это по-прежнему из бота, разово).
+
+
+═══════════════════════════════════════════════════════════════
+Частые ошибки
+═══════════════════════════════════════════════════════════════
+
+• TelegramConflictError — два раза запущен bot.py (два сервиса с polling).
+  Решение: на imap-worker команда только python imap_worker.py
+
+• Дубли карточек — IMAP на боте И на воркере одновременно.
+  Решение: poputka88 → IMAP_DEDICATED_WORKER=1, без ENABLE_INCOMING_MAIL=1
+
+• imap-worker replicas = 2 — двойной опрос ящиков.
+  Решение: replicas = 1 на обоих сервисах
+
+• Локально не запускай bot.py с тем же BOT_TOKEN, пока Railway работает.
+
+
+═══════════════════════════════════════════════════════════════
+Масштаб (много почт / много пользователей)
+═══════════════════════════════════════════════════════════════
+
+На imap-worker можно поднять (только там, не на боте):
+
+   MAX_IMAP_CONCURRENT = 16
+   INCOMING_POLL_SEC = 15
+
+Пример: 100 ящиков, MAX=12 → полный круг ~1–2 минуты.
+
+
+Чеклист
+-------
+
+[ ] Postgres Online
+[ ] poputka88: replicas=1, IMAP_DEDICATED_WORKER=1, без ENABLE_INCOMING_MAIL=1
+[ ] imap-worker: python imap_worker.py, ENABLE_INCOMING_MAIL=1, replicas=1
+[ ] В логах imap-worker: 💓 IMAP worker alive
+[ ] В логах poputka88: IMAP отключён на боте
+[ ] Нет TelegramConflictError

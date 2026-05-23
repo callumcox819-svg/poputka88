@@ -34,7 +34,8 @@ from services.lead_resolve import resolve_validated_lead
 logger = logging.getLogger(__name__)
 
 _worker_task: asyncio.Task | None = None
-POLL_SEC = float(os.getenv("INCOMING_POLL_SEC", "20"))
+POLL_SEC = float(os.getenv("INCOMING_POLL_SEC", os.getenv("INCOMING_MAIL_POLL_SECONDS", "20")))
+MAX_IMAP_CONCURRENT = max(1, int(os.getenv("MAX_IMAP_CONCURRENT", "8")))
 
 
 def _format_price(price: str, currency: str = "") -> str:
@@ -339,12 +340,26 @@ async def _flush_pending_notifications(bot: Bot) -> int:
 
 
 async def _poll_loop(bot: Bot) -> None:
+    sem = asyncio.Semaphore(MAX_IMAP_CONCURRENT)
+
+    async def _one(acc: dict) -> int:
+        async with sem:
+            return await _process_account(bot, acc)
+
     while True:
         try:
             accounts = await list_imap_poll_accounts()
             new_cards = 0
-            for acc in accounts:
-                new_cards += await _process_account(bot, acc)
+            if accounts:
+                results = await asyncio.gather(
+                    *[_one(acc) for acc in accounts],
+                    return_exceptions=True,
+                )
+                for r in results:
+                    if isinstance(r, Exception):
+                        logger.error("IMAP account poll error: %s", r)
+                    else:
+                        new_cards += int(r)
             new_cards += await _flush_pending_notifications(bot)
             if accounts and new_cards:
                 logger.info(

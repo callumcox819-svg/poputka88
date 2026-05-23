@@ -1,0 +1,17 @@
+# Сервис poputka88 (бот): numReplicas = 1
+[deploy]
+numReplicas = 1
+
+# poputka88 Variables:
+#   DATABASE_URL = ${{Postgres.DATABASE_URL}}
+#   BOT_TOKEN = ...
+#   IMAP_DEDICATED_WORKER = 1
+#
+# Второй сервис imap-worker (тот же GitHub-репо):
+#   Start command: python imap_worker.py
+#   ENABLE_INCOMING_MAIL = 1
+#   MAX_IMAP_CONCURRENT = 12
+#   INCOMING_POLL_SEC = 20
+#   те же DATABASE_URL и BOT_TOKEN
+#
+# Подробно: RAILWAY_IMAP_WORKER.txt
