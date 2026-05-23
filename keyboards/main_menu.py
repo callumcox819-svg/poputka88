@@ -13,6 +13,7 @@ MAIN_MENU_TEXTS: frozenset[str] = frozenset(
         "/stop",
         "/stopsend",
         "📊 Статус рассылки",
+        "🧪 Тест маил",
     }
 )
 
@@ -21,6 +22,7 @@ BTN_QUICK_ADD = "⚡ Быстрое добавление"
 BTN_START_MAIL = "▶️ Запустить рассылку"
 BTN_STOP_MAIL = "⏹ Остановить рассылку"
 BTN_STATUS = "📊 Статус рассылки"
+BTN_TEST_MAIL = "🧪 Тест маил"
 
 # Для FSM: не перехватывать как ввод
 MENU_BUTTONS = MAIN_MENU_TEXTS
@@ -43,6 +45,7 @@ def main_keyboard(*, show_admin: bool = False) -> ReplyKeyboardMarkup:
             KeyboardButton(text=BTN_STOP_MAIL),
         ],
         [KeyboardButton(text=BTN_STATUS)],
+        [KeyboardButton(text=BTN_TEST_MAIL)],
     ]
     if show_admin:
         rows.append([KeyboardButton(text="👑 Админ-панель")])

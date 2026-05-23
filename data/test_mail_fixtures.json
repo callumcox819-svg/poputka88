@@ -1,0 +1,59 @@
+{
+  "fixtures": [
+    {
+      "id": 1,
+      "item_title": "Polaroid Instax Mini 9",
+      "item_photo": "https://scontent-fra5-2.xx.fbcdn.net/v/t39.84726-6/704672378_4333927163541311_3832707444450992193_n.jpg?stp=c0.51.133.133a_dst-jpg_p133x133_tt6&_nc_cat=107&ccb=1-7&_nc_sid=92e707&_nc_ohc=BiToZECAKyEQ7kNvwGrV2eg&_nc_oc=Adphts-qdzq22uSg4lvX3Vz4QgvenqmrgPB42VVngd-3E9kSRenwxXHmzfJWZUN3tMI&_nc_zt=14&_nc_ht=scontent-fra5-2.xx&_nc_gid=AUZBmqSjNuexmfaQZV04JQ&_nc_ss=7b1a0&oh=00_Af7vNX2jmZHJA1j3Uzgf0zt7EZe-7-3UG09751iVQTvkKQ&oe=6A162839",
+      "item_price": "65.00 CHF",
+      "item_link": "https://www.facebook.com/marketplace/item/2386383905196028/",
+      "person_name": "Sofia Leal",
+      "location": "Lausanne, VD",
+      "seller_email": "test.sofia.leal@fixture.ch",
+      "reply_body": "Bonjour, votre Polaroid est-il toujours disponible ? Merci."
+    },
+    {
+      "id": 2,
+      "item_title": "Bose QuietComfort Earbuds",
+      "item_photo": "https://scontent-zrh1-1.xx.fbcdn.net/v/t39.84726-6/703572145_1867233973892378_6262088996099357812_n.jpg?stp=c0.77.133.133a_dst-jpg_p133x133_tt6&_nc_cat=108&ccb=1-7&_nc_sid=92e707&_nc_ohc=aiR4E4Y9zLYQ7kNvwFQAPMe&_nc_oc=AdoneF5JJUO0_3pMKOnxFdULSYmnbFdJF8IEV-cGX4_MujCgEHGr-CL45NEIRiLmBOs&_nc_zt=14&_nc_ht=scontent-zrh1-1.xx&_nc_gid=9SpORTQZCvtIEQCstt1T-A&_nc_ss=7b1a0&oh=00_Af6jNrX6Y1bO41jVTnElZu1LoZY_EOj-zGcwkCdKxS05Vw&oe=6A161D2B",
+      "item_price": "49.00 CHF",
+      "item_link": "https://www.facebook.com/marketplace/item/2238577153569613/",
+      "person_name": "Angelica Carigiet",
+      "location": "Luzern, LU",
+      "seller_email": "test.angelica.carigiet@fixture.ch",
+      "reply_body": "Hallo, sind die Bose Earbuds noch zu haben?"
+    },
+    {
+      "id": 3,
+      "item_title": "Bambu Lab P2S Combo + AMS 2 Pro + ca. 20kg Filament – wie neu",
+      "item_photo": "https://scontent-fra3-1.xx.fbcdn.net/v/t39.84726-6/703076643_2367968756948820_7741001328453486285_n.jpg?stp=c0.22.133.133a_dst-jpg_p133x133_tt6&_nc_cat=105&ccb=1-7&_nc_sid=92e707&_nc_ohc=CWjOljBXIAQQ7kNvwHp4hdE&_nc_oc=AdqF1NVeFOVCJWHXNtCxyBuktZXIIsQk2LgqfxNxlsQF-X9UDKPt0SljdTWyhTV4PTY&_nc_zt=14&_nc_ht=scontent-fra3-1.xx&_nc_gid=eR_8KOPtoEdZGBHSktpTIg&_nc_ss=7b1a0&oh=00_Af5XSw26liOReezdVrvOvf-48w5sj61enUEzurz5WSFuxw&oe=6A16234F",
+      "item_price": "900.00 CHF",
+      "item_link": "https://www.facebook.com/marketplace/item/2413451062483220/",
+      "person_name": "Marco Mega",
+      "location": "Balsthal, SO",
+      "seller_email": "test.marco.mega@fixture.ch",
+      "reply_body": "Guten Tag, ist der 3D-Drucker noch verfügbar?"
+    },
+    {
+      "id": 4,
+      "item_title": "Clavier gaming ASUS Tastatur ROG Strix Scope II 96 RX Wireless WHT",
+      "item_photo": "https://scontent-fra5-1.xx.fbcdn.net/v/t39.84726-6/703924561_2906917669647399_5285082212268353903_n.jpg?stp=c12.0.133.133a_dst-jpg_p133x133_tt6&_nc_cat=110&ccb=1-7&_nc_sid=92e707&_nc_ohc=zpTOwjAUHOwQ7kNvwFj4AmZ&_nc_oc=AdrjpyxUN5TTegpX2EzKBrN9Pm3fSZh_3tqEmu8V4VkpJpJPnXYo7jjZDdEPYD6bdHc&_nc_zt=14&_nc_ht=scontent-fra5-1.xx&_nc_gid=qchi23bO8zGSGFL05yxQLw&_nc_ss=7b1a0&oh=00_Af7UJyb8b8ntePhwfrDk4vDkxKqp9hc89fJpEbzqgSW_CA&oe=6A161D16",
+      "item_price": "100.00 CHF",
+      "item_link": "https://www.facebook.com/marketplace/item/1502009461327238/",
+      "person_name": "Chris Hamprecht",
+      "location": "Savièse, VS",
+      "seller_email": "test.chris.hamprecht@fixture.ch",
+      "reply_body": "Salut, la tastiera ASUS è ancora disponibile?"
+    },
+    {
+      "id": 5,
+      "item_title": "Remote Internet Link/Router TP-Link",
+      "item_photo": "https://scontent-fra5-2.xx.fbcdn.net/v/t39.84726-6/703001917_784961044570691_7873821094959801997_n.jpg?stp=c0.22.133.133a_dst-jpg_p133x133_tt6&_nc_cat=107&ccb=1-7&_nc_sid=92e707&_nc_ohc=UG3r8AFXUL8Q7kNvwGvYzTq&_nc_oc=AdpS1bpzI8yi9EWYPqr3VmKBEMtCq8XEunSra0mr0EIyd5041rCJyC7QS2HpNYdSLy0&_nc_zt=14&_nc_ht=scontent-fra5-2.xx&_nc_gid=4cf59xBStpTit0UDD0md3w&_nc_ss=7b1a0&oh=00_Af4QyB5H0wpUoF7Pb7_PY_1N_sAgg1kwgoFGoqPSnM5n5w&oe=6A16277F",
+      "item_price": "50.00 CHF",
+      "item_link": "https://www.facebook.com/marketplace/item/963905893177759/",
+      "person_name": "William Purificacion",
+      "location": "Muttenz, BL",
+      "seller_email": "test.william.purificacion@fixture.ch",
+      "reply_body": "Hello, is the TP-Link router still available?"
+    }
+  ]
+}

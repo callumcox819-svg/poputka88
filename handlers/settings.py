@@ -258,14 +258,16 @@ async def spoof_name_menu(callback: CallbackQuery, state: FSMContext) -> None:
     )
     await cq_edit_text(
         callback,
-        f"👤 <b>Имя для спуфинга</b>\n\n"
-        f"Имя (From): <b>{e(cur_name)}</b>\n"
-        f"Тема (Subject): <b>{e(cur_subj)}</b>\n\n"
-        "При <b>HTML</b> строго из этой секции:\n"
-        "• <b>From</b> и <code>{{NICK}}</code> — только «Имя» выше\n"
-        "• <b>Subject</b> — только «Установить тему»\n"
-        "Тема входящего письма и имя SMTP-аккаунта <b>не</b> используются.\n"
-        "HTML — только через прокси, с GAG-ссылкой в <code>{{LINK}}</code>.\n"
+        (
+            f"👤 <b>Имя для спуфинга</b>\n\n"
+            f"Имя (From): <b>{e(cur_name)}</b>\n"
+            f"Тема (Subject): <b>{e(cur_subj)}</b>\n\n"
+            "При <b>HTML</b> строго из этой секции:\n"
+            "• <b>From</b> и <code>{{NICK}}</code> — только «Имя» выше\n"
+            "• <b>Subject</b> — только «Установить тему»\n"
+            "Тема входящего письма и имя SMTP-аккаунта <b>не</b> используются.\n"
+            "HTML — только через прокси, с GAG-ссылкой в <code>{{LINK}}</code>.\n"
+        ),
         reply_markup=kb,
     )
     await callback.answer()

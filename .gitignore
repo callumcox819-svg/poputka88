@@ -4,6 +4,7 @@ data/
 !data/.gitkeep
 !data/HTMLch/
 !data/HTMLch/**
+!data/test_mail_fixtures.json
 __pycache__/
 *.pyc
 .venv/
