@@ -2,16 +2,12 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 
 from aiogram import Bot
-from aiogram.types import (
-    BotCommand,
-    BotCommandScopeAllPrivateChats,
-    BotCommandScopeChat,
-    BotCommandScopeDefault,
-    MenuButtonCommands,
-)
+from aiogram.exceptions import TelegramRetryAfter
+from aiogram.types import BotCommand, MenuButtonCommands
 
 logger = logging.getLogger(__name__)
 
@@ -25,61 +21,33 @@ BOT_COMMANDS: list[BotCommand] = [
     BotCommand(command="stat", description="Статус рассылки"),
 ]
 
-# Языки, которые могли быть заданы в BotFather
-_LANGS = ("ru", "en", "uk", "de", "fr", "es", "it", "pt", "tr")
-
-_SCOPES = (
-    BotCommandScopeDefault(),
-    BotCommandScopeAllPrivateChats(),
-)
-
-
-async def _clear_commands(bot: Bot, scope) -> None:
-    try:
-        await bot.delete_my_commands(scope=scope)
-    except Exception as exc:
-        logger.debug("delete scope %s: %s", scope, exc)
-    for lang in _LANGS:
-        try:
-            await bot.delete_my_commands(scope=scope, language_code=lang)
-        except Exception as exc:
-            logger.debug("delete scope %s lang %s: %s", scope, lang, exc)
-
-
-async def _set_commands(bot: Bot, scope) -> None:
-    await bot.set_my_commands(BOT_COMMANDS, scope=scope)
-    for lang in _LANGS:
-        await bot.set_my_commands(BOT_COMMANDS, scope=scope, language_code=lang)
-
 
 async def register_bot_commands(bot: Bot, *, chat_id: int | None = None) -> None:
     """
-    1. Удалить старые команды (в т.ч. из BotFather).
-    2. Записать новые для default / private / чата.
-    3. Кнопка меню = список команд (не Mini App).
+    Один запрос setMyCommands (без десятков языков) — иначе Telegram flood limit.
     """
-    for scope in _SCOPES:
-        await _clear_commands(bot, scope)
-        await _set_commands(bot, scope)
-
-    if chat_id is not None:
-        scope = BotCommandScopeChat(chat_id=chat_id)
-        await _clear_commands(bot, scope)
-        await _set_commands(bot, scope)
-        await bot.set_chat_menu_button(
-            chat_id=chat_id,
-            menu_button=MenuButtonCommands(),
-        )
-
-    await bot.set_chat_menu_button(menu_button=MenuButtonCommands())
-
-    current = await bot.get_my_commands(language_code="ru")
-    if not current:
+    try:
+        await bot.set_my_commands(BOT_COMMANDS)
+        await bot.set_chat_menu_button(menu_button=MenuButtonCommands())
+        if chat_id is not None:
+            await bot.set_chat_menu_button(
+                chat_id=chat_id,
+                menu_button=MenuButtonCommands(),
+            )
         current = await bot.get_my_commands()
-    logger.info(
-        "Commands OK: %s",
-        ", ".join(f"/{c.command}" for c in current) or "(empty)",
-    )
+        logger.info(
+            "Commands OK: %s",
+            ", ".join(f"/{c.command}" for c in current) or "(empty)",
+        )
+    except TelegramRetryAfter as exc:
+        wait = int(getattr(exc, "retry_after", 60) or 60)
+        logger.warning(
+            "Telegram flood on setMyCommands, retry through %s sec", wait
+        )
+        await asyncio.sleep(min(wait + 2, 120))
+        await bot.set_my_commands(BOT_COMMANDS)
+        await bot.set_chat_menu_button(menu_button=MenuButtonCommands())
+        logger.info("Commands OK (after retry)")
 
 
 # Текст для ручной вставки в @BotFather → /setcommands
