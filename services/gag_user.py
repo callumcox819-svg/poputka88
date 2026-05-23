@@ -84,18 +84,32 @@ def _gag_fields_from_lead_row(lead: dict) -> dict[str, str | None]:
                 if isinstance(item, dict):
                     if not title:
                         title = str(
-                            item.get("item_title") or item.get("title") or ""
+                            item.get("item_title")
+                            or item.get("title")
+                            or item.get("product_title")
+                            or ""
                         ).strip()
                     if not price:
                         price = str(
-                            item.get("item_price") or item.get("price") or ""
+                            item.get("item_price")
+                            or item.get("price")
+                            or item.get("offer_price")
+                            or ""
                         ).strip()
                     if not link:
                         link = str(
-                            item.get("item_link") or item.get("link") or ""
+                            item.get("item_link")
+                            or item.get("link")
+                            or item.get("url")
+                            or ""
                         ).strip()
                     if not photo:
-                        photo = str(item.get("item_photo") or "").strip()
+                        photo = str(
+                            item.get("item_photo")
+                            or item.get("photo")
+                            or item.get("image")
+                            or ""
+                        ).strip()
             except json.JSONDecodeError:
                 pass
 

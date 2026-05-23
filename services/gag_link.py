@@ -8,7 +8,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from database import get_validated_lead_by_id, save_incoming_gag_link
+from database import get_validated_lead_by_id, save_incoming_gag_link, update_incoming_mail_lead_snapshot
+from services.imap_fetch import service_label_from_link
 from services.gag_network import GAGError
 from services.gag_user import (
     GagNotConfiguredError,
@@ -35,6 +36,7 @@ async def create_gag_link_for_incoming(
     campaign_id: int | None = None,
     lead_id: int | None = None,
     incoming_mail_id: int | None = None,
+    subject: str = "",
 ) -> GagLinkResult:
     """
     Генерация строго по лиду из БД (товар при валидации + рассылка).
@@ -45,6 +47,7 @@ async def create_gag_link_for_incoming(
         lead_id=lead_id,
         contact_email=contact_email,
         campaign_id=campaign_id,
+        subject=subject,
     )
     if not resolved:
         em = (contact_email or "").strip().lower() or "—"
@@ -54,6 +57,18 @@ async def create_gag_link_for_incoming(
         )
 
     lead = resolved.lead
+    if incoming_mail_id:
+        link = (lead.get("item_link") or "").strip()
+        svc = service_label_from_link(link) or ""
+        await update_incoming_mail_lead_snapshot(
+            incoming_mail_id,
+            user_id,
+            lead_id=int(lead["id"]),
+            product_title=(lead.get("item_title") or "").strip(),
+            service_label=svc,
+            photo_url=(lead.get("item_photo") or "").strip(),
+            offer_price=(lead.get("item_price") or "").strip(),
+        )
     try:
         url = await generate_link_for_lead(user_id, lead)
     except GAGError as exc:

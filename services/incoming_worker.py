@@ -47,8 +47,12 @@ def _format_price(price: str, currency: str = "") -> str:
     return p
 
 
-async def _lead_meta(user_id: int, from_email: str, body: str) -> dict:
-    resolved = await resolve_validated_lead(user_id, contact_email=from_email)
+async def _lead_meta(
+    user_id: int, from_email: str, body: str, *, subject: str = ""
+) -> dict:
+    resolved = await resolve_validated_lead(
+        user_id, contact_email=from_email, subject=subject
+    )
     if not resolved:
         svc = service_label_from_body(body)
         return {
@@ -194,7 +198,7 @@ async def _process_account(
 
         prior = await count_incoming_from_sender(acc_id, from_email)
         is_first = prior == 0
-        meta = await _lead_meta(user_id, from_email, body)
+        meta = await _lead_meta(user_id, from_email, body, subject=subject)
 
         mail_id = await get_incoming_mail_id_by_uid(acc_id, uid) or 0
         if mail_id:

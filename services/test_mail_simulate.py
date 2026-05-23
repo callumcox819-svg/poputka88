@@ -2,50 +2,24 @@
 
 from __future__ import annotations
 
-import json
 import time
 from typing import Any
 
 from aiogram import Bot
 
-from database import (
-    count_incoming_from_sender,
-    get_validated_lead_by_email,
-    insert_incoming_mail,
-    list_smtp_mailing_accounts,
-    save_validated_lead,
-)
+from database import count_incoming_from_sender, insert_incoming_mail, list_smtp_mailing_accounts
+from services.fixture_fields import normalize_fixture_fields
 from services.imap_fetch import service_label_from_link
 from services.incoming_worker import _notify_incoming
-from services.lead_keys import email_norm_key, seller_match_key, title_match_key
+from services.test_mail_lead import register_test_mail_lead
 
 
 async def _ensure_fixture_lead(user_id: int, fx: dict[str, Any]) -> int | None:
-    email = (fx.get("seller_email") or "").strip().lower()
+    fields = normalize_fixture_fields(fx)
+    email = fields["seller_email"]
     if not email:
         return None
-    person = (fx.get("person_name") or "").strip()
-    local, _, domain = email.partition("@")
-    raw = json.dumps(fx, ensure_ascii=False)
-    created, _ = await save_validated_lead(
-        user_id,
-        email=email,
-        person_name=person,
-        email_local=local,
-        email_domain=domain,
-        item_title=(fx.get("item_title") or "").strip(),
-        item_price=(fx.get("item_price") or "").strip(),
-        item_link=(fx.get("item_link") or "").strip(),
-        person_link="",
-        location=(fx.get("location") or "").strip(),
-        item_photo=(fx.get("item_photo") or "").strip(),
-        raw_json=raw,
-        email_norm=email_norm_key(email),
-        seller_key=seller_match_key(person),
-        title_key=title_match_key(fx.get("item_title") or ""),
-    )
-    lead = await get_validated_lead_by_email(user_id, email)
-    return int(lead["id"]) if lead else None
+    return await register_test_mail_lead(user_id, email, fx)
 
 
 async def simulate_seller_reply(
@@ -73,10 +47,11 @@ async def simulate_seller_reply(
     prior = await count_incoming_from_sender(acc_id, from_email)
     is_first = prior == 0
 
-    title = (fixture.get("item_title") or "").strip()
+    fields = normalize_fixture_fields(fixture)
+    title = fields["item_title"]
     subject = f"Re: {title}" if title else "Re: Ihre Anzeige"
-    body = (fixture.get("reply_body") or "Hallo, ist der Artikel noch verfügbar?").strip()
-    link = (fixture.get("item_link") or "").strip()
+    body = fields["reply_body"] or "Hallo, ist der Artikel noch verfügbar?"
+    link = fields["item_link"]
     svc = service_label_from_link(link) or "Marketplace"
 
     imap_uid = f"test{int(time.time() * 1000)}"
@@ -93,8 +68,8 @@ async def simulate_seller_reply(
         lead_id=lead_id,
         product_title=title,
         service_label=svc,
-        photo_url=(fixture.get("item_photo") or "").strip(),
-        offer_price=(fixture.get("item_price") or "").strip(),
+        photo_url=fields["item_photo"],
+        offer_price=fields["item_price"],
     )
     if not mail_id:
         return False, "Не удалось сохранить письмо в БД"
@@ -102,8 +77,8 @@ async def simulate_seller_reply(
     meta = {
         "lead_id": lead_id,
         "product_title": title,
-        "photo_url": (fixture.get("item_photo") or "").strip(),
-        "offer_price": (fixture.get("item_price") or "").strip(),
+        "photo_url": fields["item_photo"],
+        "offer_price": fields["item_price"],
         "service_label": svc,
     }
     inbox_label = (acc.get("sender_name") or "").strip()

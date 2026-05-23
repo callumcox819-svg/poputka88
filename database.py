@@ -952,6 +952,47 @@ async def save_validated_lead(
     title_key: str = "",
 ) -> tuple[bool, str]:
     """Возвращает (created, email). created=False если дубликат email."""
+    created, _lid, em = await upsert_validated_lead(
+        user_id,
+        email=email,
+        person_name=person_name,
+        email_local=email_local,
+        email_domain=email_domain,
+        item_title=item_title,
+        item_price=item_price,
+        item_link=item_link,
+        person_link=person_link,
+        location=location,
+        item_photo=item_photo,
+        raw_json=raw_json,
+        offer_id=offer_id,
+        email_norm=email_norm,
+        seller_key=seller_key,
+        title_key=title_key,
+    )
+    return created, em
+
+
+async def upsert_validated_lead(
+    user_id: int,
+    *,
+    email: str,
+    person_name: str,
+    email_local: str,
+    email_domain: str,
+    item_title: str = "",
+    item_price: str = "",
+    item_link: str = "",
+    person_link: str = "",
+    location: str = "",
+    item_photo: str = "",
+    raw_json: str,
+    offer_id: int = 0,
+    email_norm: str = "",
+    seller_key: str = "",
+    title_key: str = "",
+) -> tuple[bool, int | None, str]:
+    """(created, lead_id, email). Обновляет лид, если email уже есть."""
     from services.lead_keys import email_norm_key, seller_match_key, title_match_key
 
     email = email.strip().lower()
@@ -966,8 +1007,40 @@ async def save_validated_lead(
             "SELECT id FROM validated_leads WHERE user_id = ? AND email = ?",
             (user_id, email),
         )
-        if await cur.fetchone():
-            return False, email
+        row = await cur.fetchone()
+        if row:
+            lead_id = int(row[0])
+            await db.execute(
+                """
+                UPDATE validated_leads SET
+                    person_name = ?, email_local = ?, email_domain = ?,
+                    item_title = ?, item_price = ?, item_link = ?,
+                    person_link = ?, location = ?, item_photo = ?,
+                    raw_json = ?, offer_id = ?, email_norm = ?,
+                    seller_key = ?, title_key = ?
+                WHERE id = ? AND user_id = ?
+                """,
+                (
+                    person_name,
+                    email_local,
+                    email_domain,
+                    item_title,
+                    item_price,
+                    item_link,
+                    person_link,
+                    location,
+                    item_photo,
+                    raw_json,
+                    int(offer_id or 0),
+                    email_norm,
+                    seller_key,
+                    title_key,
+                    lead_id,
+                    user_id,
+                ),
+            )
+            await db.commit()
+            return False, lead_id, email
         await db.execute(
             """
             INSERT INTO validated_leads (
@@ -996,7 +1069,13 @@ async def save_validated_lead(
             ),
         )
         await db.commit()
-        return True, email
+        cur2 = await db.execute(
+            "SELECT id FROM validated_leads WHERE user_id = ? AND email = ?",
+            (user_id, email),
+        )
+        row2 = await cur2.fetchone()
+        lead_id = int(row2[0]) if row2 else None
+        return True, lead_id, email
 
 
 async def register_validated_seller(
@@ -1417,6 +1496,40 @@ async def insert_incoming_mail(
         )
         await db.commit()
         return int(cur.lastrowid or 0)
+
+
+async def update_incoming_mail_lead_snapshot(
+    incoming_id: int,
+    user_id: int,
+    *,
+    lead_id: int | None,
+    product_title: str = "",
+    service_label: str = "",
+    photo_url: str = "",
+    offer_price: str = "",
+) -> None:
+    async with db_connect() as db:
+        await db.execute(
+            """
+            UPDATE incoming_mails SET
+                lead_id = ?,
+                product_title = ?,
+                service_label = ?,
+                photo_url = ?,
+                offer_price = ?
+            WHERE id = ? AND user_id = ?
+            """,
+            (
+                lead_id,
+                (product_title or "")[:500],
+                (service_label or "")[:120],
+                (photo_url or "")[:2000],
+                (offer_price or "")[:80],
+                incoming_id,
+                user_id,
+            ),
+        )
+        await db.commit()
 
 
 async def set_incoming_mail_tg_message(

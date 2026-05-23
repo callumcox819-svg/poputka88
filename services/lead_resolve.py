@@ -16,6 +16,7 @@ from database import (
     get_validated_lead_by_id,
     get_validated_lead_by_reply_email,
 )
+from services.test_mail_lead import resolve_lead_for_test_reply
 
 
 @dataclass(frozen=True)
@@ -30,6 +31,7 @@ async def resolve_validated_lead(
     lead_id: int | None = None,
     contact_email: str = "",
     campaign_id: int | None = None,
+    subject: str = "",
 ) -> LeadResolveResult | None:
     uid = int(user_id)
 
@@ -55,5 +57,11 @@ async def resolve_validated_lead(
     lead = await get_validated_lead_by_reply_email(uid, email)
     if lead:
         return LeadResolveResult(lead=lead, matched_by="email_fuzzy")
+
+    lead = await resolve_lead_for_test_reply(
+        uid, contact_email=email, subject=subject
+    )
+    if lead:
+        return LeadResolveResult(lead=lead, matched_by="test_mail")
 
     return None

@@ -29,6 +29,7 @@ from services.test_mail_fixtures import (
     load_test_fixtures,
     pick_random_test_fixture,
 )
+from services.test_mail_lead import register_test_mail_lead
 from services.test_mail_simulate import simulate_seller_reply
 from services.user_json_store import load_json_blob, save_json_blob
 from utils.bg_jobs import is_running as bg_is_running, start as bg_start
@@ -157,7 +158,7 @@ def _menu_text(
     return (
         "🧪 <b>Тест маил</b>\n\n"
         f"{from_line}{proxy_line}{imap_line}\n"
-        "▶️ Отправка: тема = название товара (OFFER), текст — умный пресет.\n"
+        "▶️ Отправка: тема = товар из JSON, лид на email получателя (GAG/фото).\n"
         f"{fx_lines}\n"
         f"<b>Получатели ({len(emails)}):</b>\n{lines}\n"
         "Ответ в Gmail → карточка в боте только через IMAP (тот же ящик, что слал письмо)."
@@ -281,9 +282,19 @@ async def _send_test_one(
     except Exception as exc:
         return False, str(exc)[:200]
 
+    lead_id = await register_test_mail_lead(user_id, to_email, fixture)
+    lead_hint = ""
+    if lead_id:
+        photo = "📷" if (fixture.get("item_photo") or "").strip() else ""
+        price = (fixture.get("item_price") or "").strip()
+        lead_hint = (
+            f"\n🧾 Лид #{lead_id} (фото/цена/GAG из JSON) {photo}"
+            + (f" · <code>{e(price)}</code>" if price else "")
+        )
+
     return True, (
         f"✅ <code>{e(to_email)}</code>\n"
-        f"Тема: <code>{e(subject)}</code>"
+        f"Тема: <code>{e(subject)}</code>{lead_hint}"
     )
 
 
