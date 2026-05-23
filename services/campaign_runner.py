@@ -16,6 +16,7 @@ from services.encoding import TransferEncoding
 from services.mailing_timing import load_timing
 from services.presets import pick_random_smart_preset
 from services.user_settings import get_bool
+from services.proxy_pool import mark_proxy_mailing_dead, pick_next_proxy
 from services.smtp_sender import send_one
 from services.task_control import (
     clear_stop_campaign,
@@ -112,6 +113,7 @@ async def run_campaign(
                 if smart_body:
                     body = smart_body
 
+            proxy = await pick_next_proxy(user_id)
             try:
                 used = await send_one(
                     settings,
@@ -121,10 +123,20 @@ async def run_campaign(
                     is_html=bool(camp["is_html"]),
                     transfer=transfer,
                     account=account,
+                    proxy=proxy,
                 )
                 await mark_sent(campaign_id, email)
-                logger.info("sent %s enc=%s", email, used)
+                logger.info("sent %s enc=%s proxy=%s", email, used, bool(proxy))
             except Exception as exc:
+                if proxy and proxy.get("id"):
+                    err_l = str(exc).lower()
+                    if any(
+                        k in err_l
+                        for k in ("socks", "proxy", "timeout", "connect", "refused")
+                    ):
+                        await mark_proxy_mailing_dead(
+                            user_id, int(proxy["id"]), str(exc)
+                        )
                 await mark_failed(campaign_id, email, str(exc))
                 logger.warning("fail %s: %s", email, exc)
 

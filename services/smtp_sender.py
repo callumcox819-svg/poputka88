@@ -11,6 +11,7 @@ import aiosmtplib
 
 from config import Settings
 from services.encoding import TransferEncoding, resolve_encoding
+from services.proxy_smtp import send_via_proxy
 
 EncodingName = Literal["7bit", "quoted-printable", "base64"]
 
@@ -64,6 +65,7 @@ async def send_one(
     reply_to: str | None = None,
     account: dict[str, Any] | None = None,
     use_tls: bool | None = None,
+    proxy: dict[str, Any] | None = None,
 ) -> EncodingName:
     enc = resolve_encoding(transfer, body, is_html=is_html)
 
@@ -91,6 +93,19 @@ async def send_one(
         encoding=enc,
         reply_to=reply_to,
     )
+
+    if proxy:
+        await send_via_proxy(
+            proxy,
+            smtp_host=host,
+            smtp_port=port,
+            login=user or "",
+            password=password or "",
+            mail_from=mail_from,
+            to_addr=to_addr,
+            message=message,
+        )
+        return enc
 
     tls_on = tls_default if use_tls is None else use_tls
     tls_ctx = ssl.create_default_context()

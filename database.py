@@ -57,6 +57,21 @@ async def init_db() -> None:
 
             CREATE INDEX IF NOT EXISTS idx_recipients_campaign
                 ON recipients(campaign_id, status);
+            CREATE TABLE IF NOT EXISTS proxies (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id INTEGER NOT NULL,
+                host TEXT NOT NULL,
+                port INTEGER NOT NULL,
+                username TEXT,
+                password TEXT,
+                proxy_type TEXT NOT NULL DEFAULT 'socks5',
+                is_active INTEGER,
+                last_error TEXT,
+                created_at TEXT NOT NULL DEFAULT (datetime('now'))
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_proxies_user ON proxies(user_id);
+
             CREATE TABLE IF NOT EXISTS user_settings (
                 user_id INTEGER NOT NULL,
                 key TEXT NOT NULL,
@@ -402,3 +417,111 @@ async def set_user_delay(user_id: int, delay: float) -> None:
             (user_id, delay),
         )
         await db.commit()
+
+
+async def list_proxies(user_id: int) -> list[dict]:
+    async with aiosqlite.connect(DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        cur = await db.execute(
+            """
+            SELECT id, host, port, username, password, proxy_type, is_active, last_error, created_at
+            FROM proxies WHERE user_id = ?
+            ORDER BY id
+            """,
+            (user_id,),
+        )
+        return [dict(r) for r in await cur.fetchall()]
+
+
+async def list_sendable_proxies(user_id: int) -> list[dict]:
+    """SOCKS5 для рассылки: не помечены мёртвыми (is_active != 0)."""
+    async with aiosqlite.connect(DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        cur = await db.execute(
+            """
+            SELECT id, host, port, username, password, proxy_type, is_active, last_error
+            FROM proxies
+            WHERE user_id = ? AND (is_active IS NULL OR is_active = 1)
+            ORDER BY id
+            """,
+            (user_id,),
+        )
+        return [dict(r) for r in await cur.fetchall()]
+
+
+async def add_proxy(
+    user_id: int,
+    *,
+    host: str,
+    port: int,
+    username: str | None,
+    password: str | None,
+    proxy_type: str = "socks5",
+    is_active: int | None = None,
+    last_error: str | None = None,
+) -> int:
+    async with aiosqlite.connect(DB_PATH) as db:
+        cur = await db.execute(
+            """
+            INSERT INTO proxies (user_id, host, port, username, password, proxy_type, is_active, last_error)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                user_id,
+                host,
+                int(port),
+                username,
+                password,
+                proxy_type,
+                is_active,
+                last_error,
+            ),
+        )
+        await db.commit()
+        return int(cur.lastrowid or 0)
+
+
+async def update_proxy_status(
+    proxy_id: int,
+    user_id: int,
+    *,
+    is_active: int | None,
+    last_error: str | None,
+) -> None:
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute(
+            """
+            UPDATE proxies SET is_active = ?, last_error = ?
+            WHERE id = ? AND user_id = ?
+            """,
+            (is_active, last_error, proxy_id, user_id),
+        )
+        await db.commit()
+
+
+async def delete_proxy(user_id: int, proxy_id: int) -> bool:
+    async with aiosqlite.connect(DB_PATH) as db:
+        cur = await db.execute(
+            "DELETE FROM proxies WHERE id = ? AND user_id = ?",
+            (proxy_id, user_id),
+        )
+        await db.commit()
+        return cur.rowcount > 0
+
+
+async def delete_all_proxies(user_id: int) -> int:
+    async with aiosqlite.connect(DB_PATH) as db:
+        cur = await db.execute("DELETE FROM proxies WHERE user_id = ?", (user_id,))
+        await db.commit()
+        return int(cur.rowcount or 0)
+
+
+async def get_proxy(proxy_id: int, user_id: int) -> dict | None:
+    async with aiosqlite.connect(DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        cur = await db.execute(
+            "SELECT * FROM proxies WHERE id = ? AND user_id = ?",
+            (proxy_id, user_id),
+        )
+        row = await cur.fetchone()
+        return dict(row) if row else None
