@@ -77,7 +77,9 @@ def _user_line(session: ValidationSession) -> str:
 def format_status(session: ValidationSession, *, finished: bool = False) -> str:
     s = session.stats
     bar, pct = _progress_bar(s.processed, s.total)
-    if finished and s.stopped:
+    if finished and s.fatal_reason:
+        title = f"⛔ Подбор остановлен: ValidEmail {s.fatal_reason}"
+    elif finished and s.stopped:
         title = "⏹ Подбор остановлен (/stopcheck)"
     elif finished:
         title = "✅ Подбор завершён"

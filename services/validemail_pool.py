@@ -1,11 +1,18 @@
-"""Пул ValidEmail: несколько API-ключей параллельно."""
+"""Пул ValidEmail: несколько API-ключей, домены по приоритету (как happy88)."""
 
 from __future__ import annotations
 
 import asyncio
+import logging
+import os
 from typing import Any
 
 from services.validemail_api import validate_email_api
+
+logger = logging.getLogger(__name__)
+
+RATE_LIMIT_BACKOFF_SEC = float(os.getenv("VALIDEMAIL_RATE_LIMIT_BACKOFF_SEC", "10"))
+RATE_LIMIT_RETRIES = max(1, int(os.getenv("VALIDEMAIL_RATE_LIMIT_RETRIES", "4")))
 
 
 class ValidemailKeyPool:
@@ -61,32 +68,39 @@ async def find_deliverable_email(
     domains: list[str],
 ) -> tuple[str | None, str | None, str | None]:
     """
-    Проверяет local@domain для всех доменов параллельно.
-    Возвращает (email, domain, fatal_reason) — fatal_reason при payment/rate_limit.
+    Домены по приоритету; на продавца — первая валидная почта, дальше не проверяем.
+
+    Возвращает (email, domain, fatal_reason).
+    fatal_reason только при payment_required (кончились деньги на ключе).
+    rate_limit — пауза и повтор, без остановки всего подбора (как happy88).
     """
     if not local or not domains:
         return None, None, None
 
-    async def _one(domain: str) -> tuple[str, bool, str]:
-        email = f"{local}@{domain}".lower()
-        ok, reason, _ = await pool.validate(email)
-        return email, ok, reason
+    for dom in domains:
+        dom = (dom or "").strip().lower()
+        if not dom:
+            continue
+        email = f"{local}@{dom}".lower()
 
-    tasks = [asyncio.create_task(_one(d)) for d in domains]
-    fatal: str | None = None
-    try:
-        for done in asyncio.as_completed(tasks):
-            email, ok, reason = await done
-            if reason in ("payment_required", "rate_limit"):
-                fatal = reason
-                break
+        for attempt in range(RATE_LIMIT_RETRIES):
+            ok, reason, _ = await pool.validate(email)
             if ok:
-                domain = email.split("@", 1)[1]
-                return email, domain, None
-    finally:
-        for t in tasks:
-            if not t.done():
-                t.cancel()
-        await asyncio.gather(*tasks, return_exceptions=True)
+                return email, dom, None
+            if reason == "payment_required":
+                return None, None, "payment_required"
+            if reason == "rate_limit":
+                wait = RATE_LIMIT_BACKOFF_SEC * (attempt + 1)
+                logger.warning(
+                    "ValidEmail rate_limit %s, retry %s/%s in %ss",
+                    email,
+                    attempt + 1,
+                    RATE_LIMIT_RETRIES,
+                    wait,
+                )
+                await asyncio.sleep(wait)
+                continue
+            # невалидный ящик на этом домене — следующий домен
+            break
 
-    return None, None, fatal
+    return None, None, None

@@ -53,7 +53,8 @@ class ValidemailWorkerContext:
         domains = await get_validation_domains(user_id)
         if not domains:
             return None
-        per_key = max(2, settings.validemail_concurrency)
+        # Меньше параллелизма, чем «все домены сразу» — как happy88, меньше 429
+        per_key = max(2, min(8, settings.validemail_concurrency))
         try:
             pool = ValidemailKeyPool(
                 api_keys,
