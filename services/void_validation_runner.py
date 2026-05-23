@@ -253,17 +253,8 @@ async def run_void_validation(
         username=username,
         status_message_id=status_message_id,
     )
-    if status_message_id:
-        try:
-            await bot.edit_message_text(
-                msg,
-                chat_id=chat_id,
-                message_id=status_message_id,
-                parse_mode="HTML",
-            )
-        except Exception:
-            pass
-    elif "➕" not in msg:
+    # Короткий текст «добавлено N, всего 543» ломал UI — прогресс рисует _worker.
+    if msg:
         await bot.send_message(chat_id, msg, parse_mode="HTML")
 
 

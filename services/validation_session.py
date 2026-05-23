@@ -126,6 +126,21 @@ async def _edit_status(bot: Bot, session: ValidationSession, *, finished: bool =
         pass
 
 
+def _reset_validation_session(session: ValidationSession, *, total: int) -> None:
+    """Новый JSON после завершённого подбора — не копить старый total (478+65=543)."""
+    while True:
+        try:
+            session.queue.get_nowait()
+            session.queue.task_done()
+        except asyncio.QueueEmpty:
+            break
+    session.stats = SessionStats(total=max(0, int(total)))
+    session.export_rows.clear()
+    session.batch_seen_sellers.clear()
+    session.last_ui_text = ""
+    session.stats.stopped = False
+
+
 def _drain_validation_queue(session: ValidationSession) -> int:
     """Снять необработанные объявления с очереди (иначе queue.join() зависает навсегда)."""
     dropped = 0
@@ -332,25 +347,30 @@ async def enqueue_void_validation(
         session.stats.stopped = False
         clear_stop_validation(user_id)
 
-    if status_message_id and not session.status_message_id:
+    if status_message_id:
         session.status_message_id = status_message_id
 
+    worker_busy = bool(
+        session.worker_task is not None and not session.worker_task.done()
+    )
+    n_new = len(items)
+
     async with session.lock:
-        session.stats.total += len(items)
+        if worker_busy:
+            session.stats.total += n_new
+        else:
+            _reset_validation_session(session, total=n_new)
         for it in items:
             session.queue.put_nowait(it)
 
-    if session.worker_task is None or session.worker_task.done():
-        session.worker_task = asyncio.create_task(_worker(bot, settings, session))
+    if worker_busy:
         return (
-            f"🔎 <b>Подбор email…</b> добавлено <b>{len(items)}</b>, "
-            f"всего <b>{session.stats.total}</b> объявлений."
+            f"➕ В подбор <b>+{n_new}</b> (всего {session.stats.total}, "
+            f"уже обработано {session.stats.processed})."
         )
 
-    return (
-        f"➕ В подбор <b>+{len(items)}</b> (всего {session.stats.total}, "
-        f"уже обработано {session.stats.processed})."
-    )
+    session.worker_task = asyncio.create_task(_worker(bot, settings, session))
+    return ""
 
 
 def stop_void_validation(user_id: int) -> bool:
