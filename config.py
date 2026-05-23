@@ -17,11 +17,11 @@ VALIDEMAIL_API_KEY = "9aad847a33da60eee069cb4b2160f2a4"  # 1-й ключ validem
 
 VALIDEMAIL_API_KEY_2 = "c536a8c9a22a8a32939c084c866330b4"  # 2-й ключ validemail.co
 
-VALIDEMAIL_API_KEY_3 = ""  # 3-й ключ validemail.co
+VALIDEMAIL_API_KEY_3 = "3d8c79f69b47e4e11c82b90696ab6b69"  # 3-й ключ validemail.co
 
-VALIDEMAIL_API_KEY_4 = ""  # 4-й ключ validemail.co
+VALIDEMAIL_API_KEY_4 = "c4e3f3aff1ddde439fbd1bd42c7f3e59"  # 4-й ключ validemail.co
 
-VALIDEMAIL_API_KEY_5 = ""  # 5-й ключ validemail.co
+VALIDEMAIL_API_KEY_5 = "c1a4dde2a2ef3bd994158c35a54fdfcf"  # 5-й ключ validemail.co
 
 DEEPL_API_KEY = "sk-9c1e22408a3c43b69f01978b023fbda0"  # DeepL для кнопки «Перевести» (или DEEPL_API_KEY в Variables)
 
