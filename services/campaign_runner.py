@@ -35,6 +35,10 @@ _active: set[int] = set()
 _account_index: dict[int, int] = {}
 
 
+def campaign_task_active(campaign_id: int) -> bool:
+    return int(campaign_id) in _active
+
+
 def stop_campaign(campaign_id: int) -> None:
     request_stop_campaign(campaign_id)
 

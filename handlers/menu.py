@@ -16,10 +16,25 @@ router = Router()
 
 @router.message(Command("stop", "stopsend"))
 async def cmd_stop(message: Message) -> None:
-    ids = await stop_user_mailings(message.from_user.id)
+    from database import get_latest_paused_campaign, get_running_campaign
+
+    uid = message.from_user.id
+    ids = await stop_user_mailings(uid)
     if ids:
         await message.answer(
-            f"Рассылка остановлена (кампании: {', '.join(map(str, ids))}).",
+            f"⏹ Рассылка остановлена (кампании: {', '.join(map(str, ids))}).\n"
+            f"<i>Дойдёт до конца текущего письма (если оно отправлялось), "
+            f"дальше — пауза. /send продолжит с того же места.</i>",
+            parse_mode="HTML",
+            reply_markup=main_keyboard(),
+        )
+        return
+
+    paused = await get_latest_paused_campaign(uid)
+    if paused and int(paused.get("sent") or 0) > 0:
+        await message.answer(
+            f"Активной рассылки нет. Последняя #{paused['id']} на паузе "
+            f"({paused['sent']}/{paused['total']} отправлено). /send — продолжить.",
             reply_markup=main_keyboard(),
         )
     else:

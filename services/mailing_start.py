@@ -17,7 +17,6 @@ from database import (
     get_running_campaign,
     list_smtp_mailing_accounts,
     list_validated_emails_pending_mailing,
-    set_campaign_status,
 )
 from handlers.mailing import launch_campaign
 from keyboards.main_menu import main_keyboard
@@ -140,4 +139,4 @@ async def start_mailing_from_validated_db(
         parse_mode="HTML",
         reply_markup=main_keyboard(),
     )
-    await launch_campaign(message, settings, bot, cid, user_id=uid)
+    await launch_campaign(message, settings, bot, cid, user_id=uid, quiet=True)

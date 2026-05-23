@@ -56,16 +56,37 @@ async def launch_campaign(
     campaign_id: int,
     *,
     user_id: int | None = None,
-) -> None:
+    quiet: bool = False,
+) -> bool:
+    """Запускает фоновую рассылку. quiet=True — без «Кампания запущена» (ответ уже был выше)."""
+    from services.campaign_runner import campaign_task_active, run_campaign
+
     uid = user_id if user_id is not None else message.from_user.id
+    cid = int(campaign_id)
+
+    if campaign_task_active(cid):
+        if not quiet:
+            await message.answer(
+                f"Рассылка #{cid} уже выполняется в фоне.",
+                reply_markup=main_keyboard(),
+            )
+        return False
+
     running = await get_running_campaign(uid)
-    if running:
-        await message.answer(f"Уже идёт рассылка #{running['id']}. /stop — остановить.")
-        return
-    asyncio.create_task(
-        run_campaign(bot, settings, campaign_id, message.chat.id, uid)
-    )
-    await message.answer(f"Кампания #{campaign_id} запущена.")
+    if running and int(running["id"]) != cid:
+        await message.answer(
+            f"Уже идёт рассылка #{running['id']}. /stop — остановить.",
+            reply_markup=main_keyboard(),
+        )
+        return False
+
+    asyncio.create_task(run_campaign(bot, settings, cid, message.chat.id, uid))
+    if not quiet:
+        await message.answer(
+            f"Кампания #{cid} запущена.",
+            reply_markup=main_keyboard(),
+        )
+    return True
 
 
 @router.message(Command("new"))
