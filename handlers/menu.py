@@ -4,8 +4,8 @@ from aiogram.fsm.context import FSMContext
 from aiogram.types import Message
 
 from config import Settings
-from database import get_latest_ready_campaign, get_running_campaign
-from handlers.mailing import begin_new_campaign, launch_campaign
+from database import get_running_campaign
+from services.mailing_start import start_mailing_from_validated_db
 from handlers.settings import match_settings_menu_text, open_settings_menu
 from keyboards.main_menu import BTN_START_MAIL, BTN_STOP_MAIL, main_keyboard
 from services.campaign_runner import stop_user_mailings
@@ -39,20 +39,7 @@ async def cmd_stopcheck(message: Message) -> None:
 
 @router.message(Command("send"))
 async def cmd_send(message: Message, state: FSMContext, settings: Settings, bot) -> None:
-    running = await get_running_campaign(message.from_user.id)
-    if running:
-        await message.answer(
-            f"Уже идёт рассылка #{running['id']}. /stop — остановить.",
-            reply_markup=main_keyboard(),
-        )
-        return
-
-    ready = await get_latest_ready_campaign(message.from_user.id)
-    if ready:
-        await launch_campaign(message, settings, bot, ready["id"])
-        return
-
-    await begin_new_campaign(message, state)
+    await start_mailing_from_validated_db(message, state, settings, bot)
 
 
 @router.message(Command("imap_check", "imap_diag"))

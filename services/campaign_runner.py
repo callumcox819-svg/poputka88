@@ -153,6 +153,7 @@ async def run_campaign(
 
             body = camp["body"]
             offer_title = await offer_title_for_recipient(user_id, email)
+            subject = await mailing_subject_for_recipient(user_id, email)
 
             if is_html:
                 body, html_err = await render_campaign_html(
@@ -162,7 +163,6 @@ async def run_campaign(
                     await mark_failed(campaign_id, email, html_err)
                     continue
             else:
-                subject = await mailing_subject_for_recipient(user_id, email)
                 if smart_on:
                     smart_body = await pick_random_smart_preset(
                         user_id, offer_title
