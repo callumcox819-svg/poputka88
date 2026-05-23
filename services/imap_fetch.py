@@ -1,18 +1,20 @@
-"""IMAP: входящие на ящик бота (INBOX или Gmail All Mail) + догон UNSEEN."""
+"""IMAP: входящие на ящики из бота (внешняя почта B → ящик A в боте)."""
 
 from __future__ import annotations
 
 import email
 import imaplib
 import logging
+import os
 import re
 from email.header import decode_header
 from email.utils import parseaddr
 
 logger = logging.getLogger(__name__)
 
-DEFAULT_MAX_PER_ACCOUNT = 15
-CATCH_UP_RECENT_UIDS = 40
+# Сколько последних UID смотреть на каждый опрос (ответ B→A не должен теряться в хвосте)
+BRUTE_LOOKBACK = int(os.getenv("IMAP_BRUTE_LOOKBACK", "60"))
+MAX_FETCH_PER_POLL = int(os.getenv("IMAP_MAX_FETCH", "60"))
 GMAIL_ALL_MAIL = "[Gmail]/All Mail"
 
 # uid, from_email, from_name, subject, date, body, message_id
@@ -151,26 +153,30 @@ def fetch_inbox_mails_sync(
 
         max_uid = max(inbox_uids)
         uids_to_fetch: set[int] = set()
+        lookback = max(BRUTE_LOOKBACK, int(catch_up_recent or 0))
 
-        if last_uid is None:
-            typ_u, data_u = m.uid("search", None, "UNSEEN")
-            if typ_u == "OK":
-                uids_to_fetch.update(_parse_uid_search(data_u))
-            if not uids_to_fetch and catch_up_recent <= 0:
-                catch_up_recent = CATCH_UP_RECENT_UIDS
-        else:
+        # Всегда: последние N писем в папке (сценарий: A в боте, ответ с внешней B→A)
+        uids_to_fetch.update(sorted(inbox_uids)[-lookback:])
+
+        if last_uid is not None:
             uids_to_fetch.update(u for u in inbox_uids if u > int(last_uid))
-            typ_u, data_u = m.uid("search", None, "UNSEEN")
-            if typ_u == "OK":
-                uids_to_fetch.update(_parse_uid_search(data_u))
 
-        if catch_up_recent > 0:
-            uids_to_fetch.update(sorted(inbox_uids)[-int(catch_up_recent) :])
+        typ_u, data_u = m.uid("search", None, "UNSEEN")
+        if typ_u == "OK":
+            uids_to_fetch.update(_parse_uid_search(data_u))
+
+        # Письма именно на этот ящик (Gmail/другие)
+        try:
+            typ_t, data_t = m.uid("search", None, f'(TO "{email_addr}")')
+            if typ_t == "OK" and data_t and data_t[0]:
+                uids_to_fetch.update(_parse_uid_search(data_t))
+        except Exception:
+            pass
 
         if not uids_to_fetch:
             return [], int(max_uid)
 
-        ordered = sorted(uids_to_fetch)[-DEFAULT_MAX_PER_ACCOUNT:]
+        ordered = sorted(uids_to_fetch)[-MAX_FETCH_PER_POLL:]
         rows = _fetch_uids(m, ordered)
         if rows and selected_box == GMAIL_ALL_MAIL:
             logger.debug(
@@ -225,7 +231,7 @@ def fetch_account_mails_sync(
     Все активные ящики: Gmail = «Вся почта» (last_uid) + INBOX (догон),
     остальные = INBOX. UID в БД с префиксом all:/in: (разные папки).
     """
-    recent = max(int(catch_up_recent or 0), CATCH_UP_RECENT_UIDS)
+    recent = max(int(catch_up_recent or 0), BRUTE_LOOKBACK)
     primary = GMAIL_ALL_MAIL if is_gmail else "INBOX"
 
     rows, max_uid = fetch_inbox_mails_sync(
@@ -267,8 +273,8 @@ def fetch_account_mails_sync(
 
 def is_own_outgoing_copy(from_email: str, account_email: str, subject: str) -> bool:
     """
-    Копия вашего исходящего в ящике (From = ваш email, не ответ продавца).
-    Ваше письмо «Guten Tag…» с ifepaki886 — не карточка; ответ продавца Re: — карточка.
+    Пропуск только своего исходящего (A→внешняя B), не входящего B→A.
+    From == ящик A в боте и тема без Re:/Fwd:.
     """
     if (from_email or "").strip().lower() != (account_email or "").strip().lower():
         return False

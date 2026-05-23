@@ -37,7 +37,7 @@ logger = logging.getLogger(__name__)
 _worker_task: asyncio.Task | None = None
 POLL_SEC = float(os.getenv("INCOMING_POLL_SEC", "20"))
 # Догон последних UID на каждом ящике (все пользователи, все enabled-аккаунты)
-CATCH_UP_EVERY_POLL = int(os.getenv("IMAP_CATCH_UP_RECENT", "35"))
+CATCH_UP_EVERY_POLL = int(os.getenv("IMAP_CATCH_UP_RECENT", "60"))
 
 
 def _format_price(price: str, currency: str = "") -> str:
@@ -231,6 +231,13 @@ async def _process_account(
             if not mail_id:
                 continue
 
+        logger.info(
+            "IMAP incoming → TG user_id=%s inbox=%s FROM %s subj=%r",
+            user_id,
+            email_addr,
+            from_email,
+            (subject or "")[:80],
+        )
         try:
             await _notify_incoming(
                 bot,
@@ -244,11 +251,11 @@ async def _process_account(
             )
             notified += 1
             logger.info(
-                "IMAP new mail user_id=%s acc=%s from=%s mail_id=%s",
+                "IMAP card ok mail_id=%s user_id=%s inbox=%s from=%s",
+                mail_id,
                 user_id,
                 email_addr,
                 from_email,
-                mail_id,
             )
         except Exception:
             logger.exception("notify incoming mail_id=%s", mail_id)
