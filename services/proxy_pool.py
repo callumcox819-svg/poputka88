@@ -1,10 +1,25 @@
-"""Пул SOCKS5 для рассылки (round-robin)."""
+"""Пул SOCKS5: все живые прокси по очереди, без привязок к аккаунтам."""
 
 from __future__ import annotations
 
 from database import list_sendable_proxies, update_proxy_status
 
 _rr_index: dict[int, int] = {}
+
+_PROXY_ERR_MARKERS = (
+    "socks",
+    "proxy",
+    "timeout",
+    "timed out",
+    "connect",
+    "connection",
+    "refused",
+    "unreachable",
+    "network",
+    "tunnel",
+    "generalproxyerror",
+    "socket",
+)
 
 
 def reset_round_robin(user_id: int) -> None:
@@ -30,6 +45,11 @@ async def pick_next_proxy(user_id: int) -> dict | None:
     idx = _rr_index.get(uid, 0) % len(rows)
     _rr_index[uid] = idx + 1
     return proxy_to_dict(rows[idx])
+
+
+def is_proxy_tunnel_error(exc: BaseException) -> bool:
+    err_l = str(exc).lower()
+    return any(m in err_l for m in _PROXY_ERR_MARKERS)
 
 
 async def mark_proxy_mailing_dead(

@@ -16,8 +16,8 @@ from services.encoding import TransferEncoding
 from services.mailing_timing import load_timing
 from services.presets import pick_random_smart_preset
 from services.user_settings import get_bool
-from services.proxy_pool import mark_proxy_mailing_dead, pick_next_proxy
-from services.smtp_sender import send_one
+from database import count_proxies
+from services.mail_outbound import NoLiveProxyError, live_proxy_count, send_mail
 from services.task_control import (
     clear_stop_campaign,
     request_stop_campaign,
@@ -67,10 +67,24 @@ async def run_campaign(
         timing = await load_timing(user_id, settings.send_delay_sec)
         delay = float(timing.get("min", settings.send_delay_sec))
 
+        proxy_total = await count_proxies(user_id)
+        proxy_live = await live_proxy_count(user_id) if proxy_total else 0
+        if proxy_total and proxy_live == 0:
+            await set_campaign_status(campaign_id, "paused")
+            await bot.send_message(
+                chat_id,
+                "❌ В настройках есть прокси, но нет живых.\n"
+                "Проверьте прокси (🌐 Прокси → 🔍 Проверить) и запустите снова.",
+            )
+            return
+
+        proxy_line = ""
+        if proxy_total:
+            proxy_line = f"\nПрокси SOCKS5: {proxy_live}/{proxy_total} (все живые по очереди)"
         await bot.send_message(
             chat_id,
             f"Рассылка #{campaign_id} запущена.\n"
-            f"SMTP-аккаунтов: {len(accounts) or 'из .env (1)'}",
+            f"SMTP-аккаунтов: {len(accounts) or 'из .env (1)'}{proxy_line}",
         )
 
         while True:
@@ -113,30 +127,24 @@ async def run_campaign(
                 if smart_body:
                     body = smart_body
 
-            proxy = await pick_next_proxy(user_id)
             try:
-                used = await send_one(
+                used = await send_mail(
                     settings,
+                    user_id,
                     to_addr=email,
                     subject=camp["subject"],
                     body=body,
                     is_html=bool(camp["is_html"]),
                     transfer=transfer,
                     account=account,
-                    proxy=proxy,
                 )
                 await mark_sent(campaign_id, email)
-                logger.info("sent %s enc=%s proxy=%s", email, used, bool(proxy))
+                logger.info("sent %s enc=%s", email, used)
+            except NoLiveProxyError as exc:
+                await set_campaign_status(campaign_id, "paused")
+                await bot.send_message(chat_id, f"❌ {exc}")
+                break
             except Exception as exc:
-                if proxy and proxy.get("id"):
-                    err_l = str(exc).lower()
-                    if any(
-                        k in err_l
-                        for k in ("socks", "proxy", "timeout", "connect", "refused")
-                    ):
-                        await mark_proxy_mailing_dead(
-                            user_id, int(proxy["id"]), str(exc)
-                        )
                 await mark_failed(campaign_id, email, str(exc))
                 logger.warning("fail %s: %s", email, exc)
 

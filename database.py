@@ -419,6 +419,16 @@ async def set_user_delay(user_id: int, delay: float) -> None:
         await db.commit()
 
 
+async def count_proxies(user_id: int) -> int:
+    async with aiosqlite.connect(DB_PATH) as db:
+        cur = await db.execute(
+            "SELECT COUNT(*) FROM proxies WHERE user_id = ?",
+            (user_id,),
+        )
+        row = await cur.fetchone()
+        return int(row[0]) if row else 0
+
+
 async def list_proxies(user_id: int) -> list[dict]:
     async with aiosqlite.connect(DB_PATH) as db:
         db.row_factory = aiosqlite.Row

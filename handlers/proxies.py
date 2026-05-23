@@ -109,9 +109,9 @@ async def render_proxy_menu(target: Message | CallbackQuery, user_id: int) -> No
         "🌐 <b>Прокси (SOCKS5)</b>\n\n"
         f"Всего: {len(proxies)}\n"
         f"🟢 OK: {ok_n} · 🟡 не проверен: {unk_n} · 🔴 мёртв: {bad_n}\n\n"
-        "<i>Используются при массовой рассылке, ответах пресетом, "
-        "ручном ответе и отправке HTML.</i>\n"
-        "<i>Рассылка берёт 🟢/🟡 из пула по очереди.</i>"
+        "<i>Все исходящие письма (рассылка, ответы, HTML) идут только через "
+        "живые SOCKS5 из этого списка — по очереди, без привязок.</i>\n"
+        "<i>🟢 и 🟡 участвуют в пуле; 🔴 пропускается.</i>"
     )
     kb = _proxies_kb(proxies)
     if isinstance(target, CallbackQuery):

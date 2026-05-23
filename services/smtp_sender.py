@@ -1,4 +1,7 @@
-"""SMTP send with correct MIME encoding."""
+"""SMTP send with correct MIME encoding.
+
+Для бота используйте services.mail_outbound.send_mail — там политика прокси.
+"""
 
 from __future__ import annotations
 
