@@ -88,6 +88,7 @@ async def check_account_imap(acc: dict) -> dict[str, Any]:
     if result.get("ok"):
         last_seen = await get_imap_last_uid(aid)
         max_uid = int(result.get("max_uid") or 0)
+        unseen = int(result.get("unseen") or 0)
         result["last_seen_uid"] = last_seen
         if last_seen is None:
             result["pending_new"] = unseen
