@@ -4,10 +4,13 @@ from __future__ import annotations
 
 import asyncio
 import imaplib
+import logging
 import os
 from typing import Any
 
 from database import get_imap_last_uid
+
+logger = logging.getLogger(__name__)
 from services.imap_accounts import resolve_imap_account
 from services.imap_fetch import imap_uid_search
 
@@ -106,10 +109,35 @@ async def check_account_imap(acc: dict) -> dict[str, Any]:
 
 
 async def check_accounts_imap(accounts: list[dict]) -> list[dict]:
+    """Проверка ящиков с ограниченным параллелизмом (не бьём Postgres 25 conn сразу)."""
     if not accounts:
         return []
-    tasks = [check_account_imap(acc) for acc in accounts]
-    return list(await asyncio.gather(*tasks))
+    limit = max(1, int(os.getenv("IMAP_CHECK_CONCURRENT", "3")))
+    sem = asyncio.Semaphore(limit)
+
+    async def _one(acc: dict) -> dict:
+        async with sem:
+            return await check_account_imap(acc)
+
+    raw = await asyncio.gather(
+        *[_one(acc) for acc in accounts],
+        return_exceptions=True,
+    )
+    out: list[dict] = []
+    for acc, item in zip(accounts, raw):
+        if isinstance(item, Exception):
+            logger.warning("imap_check %s: %s", acc.get("email"), item)
+            out.append(
+                {
+                    "email": acc.get("email") or "?",
+                    "account_id": int(acc.get("id") or 0),
+                    "ok": False,
+                    "error": str(item)[:220],
+                }
+            )
+        else:
+            out.append(item)
+    return out
 
 
 def format_imap_report(results: list[dict]) -> str:

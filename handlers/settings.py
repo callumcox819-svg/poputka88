@@ -355,7 +355,22 @@ async def run_imap_check(bot: Bot, chat_id: int, user_id: int) -> None:
         f"📥 Проверяю входящие IMAP ({len(active)} ящ.)…",
         parse_mode="HTML",
     )
-    results = await check_accounts_imap(active)
+    try:
+        results = await check_accounts_imap(active)
+    except Exception as exc:
+        logger.exception("imap_check accounts failed")
+        err = (
+            "❌ <b>Не удалось завершить проверку IMAP</b>\n\n"
+            f"<code>{e(str(exc)[:300])}</code>\n\n"
+            "Часто это перегрузка Postgres (рассылка + проверка сразу). "
+            "Подождите 30–60 с и повторите, или смотрите авто-входящие на imap-worker."
+        )
+        try:
+            await status.edit_text(err, parse_mode="HTML")
+        except Exception:
+            await bot.send_message(chat_id, err, parse_mode="HTML")
+        return
+
     text = format_imap_report(results)
 
     from services.incoming_worker import poll_incoming_for_user
@@ -365,8 +380,11 @@ async def run_imap_check(bot: Bot, chat_id: int, user_id: int) -> None:
         text += (
             f"\n\n📬 <b>Догон в бот:</b> опрошено {acc_n} ящ., новых карточек: <b>{cards}</b>"
         )
-    except Exception:
+    except Exception as exc:
         logger.exception("imap_check catch-up poll failed")
+        text += (
+            f"\n\n⚠️ <b>Догон в Telegram не выполнен:</b> <code>{e(str(exc)[:200])}</code>"
+        )
 
     from utils.telegram_split import chunk_html_message
 
