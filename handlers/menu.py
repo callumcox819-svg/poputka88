@@ -9,7 +9,7 @@ from handlers.mailing import begin_new_campaign, launch_campaign
 from handlers.settings import match_settings_menu_text, open_settings_menu
 from keyboards.main_menu import BTN_START_MAIL, BTN_STOP_MAIL, main_keyboard
 from services.campaign_runner import stop_user_mailings
-from services.void_validation_runner import stop_void_validation
+from services.validation_session import stop_void_validation
 
 router = Router()
 
@@ -29,7 +29,10 @@ async def cmd_stop(message: Message) -> None:
 @router.message(Command("stopcheck"))
 async def cmd_stopcheck(message: Message) -> None:
     if stop_void_validation(message.from_user.id):
-        await message.answer("Остановка проверки…", reply_markup=main_keyboard())
+        await message.answer(
+            "⏹ Останавливаю подбор… Найденное сохранится в БД и в статистике.",
+            reply_markup=main_keyboard(),
+        )
     else:
         await message.answer("Проверка не запущена.", reply_markup=main_keyboard())
 

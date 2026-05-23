@@ -210,7 +210,9 @@ async def create_campaign(
         return cur.lastrowid or 0
 
 
-async def add_recipients(campaign_id: int, emails: list[str]) -> int:
+async def add_recipients(
+    campaign_id: int, emails: list[str], *, preserve_status: bool = False
+) -> int:
     camp = await get_campaign(campaign_id)
     user_id = int(camp["user_id"]) if camp else 0
     rows = [(campaign_id, e.strip().lower()) for e in emails if e.strip()]
@@ -229,15 +231,25 @@ async def add_recipients(campaign_id: int, emails: list[str]) -> int:
                 "INSERT INTO recipients (campaign_id, email, lead_id) VALUES (?, ?, ?)",
                 (cid, em, lead_id),
             )
-        await db.execute(
-            """
-            UPDATE campaigns
-            SET total = (SELECT COUNT(*) FROM recipients WHERE campaign_id = ?),
-                status = 'ready'
-            WHERE id = ?
-            """,
-            (campaign_id, campaign_id),
-        )
+        if preserve_status:
+            await db.execute(
+                """
+                UPDATE campaigns
+                SET total = (SELECT COUNT(*) FROM recipients WHERE campaign_id = ?)
+                WHERE id = ?
+                """,
+                (campaign_id, campaign_id),
+            )
+        else:
+            await db.execute(
+                """
+                UPDATE campaigns
+                SET total = (SELECT COUNT(*) FROM recipients WHERE campaign_id = ?),
+                    status = 'ready'
+                WHERE id = ?
+                """,
+                (campaign_id, campaign_id),
+            )
         await db.commit()
     return len(rows)
 
@@ -303,6 +315,21 @@ async def get_latest_ready_campaign(user_id: int) -> dict | None:
         )
         row = await cur.fetchone()
         return row.as_dict() if row else None
+
+
+async def append_emails_to_running_campaign(user_id: int, emails: list[str]) -> int:
+    """Добавить email в активную рассылку (status=running)."""
+    camp = await get_running_campaign(user_id)
+    if not camp or not emails:
+        return 0
+    total = 0
+    for em in emails:
+        em = (em or "").strip().lower()
+        if em:
+            total += await add_recipients(
+                int(camp["id"]), [em], preserve_status=True
+            )
+    return total
 
 
 async def get_running_campaign(user_id: int) -> dict | None:

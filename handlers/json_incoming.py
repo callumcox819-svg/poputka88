@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
 import json
 import logging
 
@@ -30,30 +29,6 @@ class JsonTextFilter(BaseFilter):
         return bool(text) and text[0] in "{["
 
 
-async def _run_items(
-    message: Message,
-    bot,
-    settings: Settings,
-    items: list,
-    *,
-    status_message_id: int | None = None,
-    status_text: str | None = None,
-) -> None:
-    if status_message_id is None:
-        status = await message.answer(status_text or "🔎 Проверка email…", parse_mode="HTML")
-        status_message_id = status.message_id
-    asyncio.create_task(
-        run_void_validation(
-            bot,
-            settings,
-            message.from_user.id,
-            message.chat.id,
-            items,
-            status_message_id=status_message_id,
-        )
-    )
-
-
 @router.message(F.document, JsonDocumentFilter())
 async def on_json_document(message: Message, bot, settings: Settings) -> None:
     doc = message.document
@@ -77,16 +52,15 @@ async def on_json_document(message: Message, bot, settings: Settings) -> None:
         await status.edit_text("В файле нет массива <code>items</code>.", parse_mode="HTML")
         return
 
-    await status.edit_text(
-        f"🔎 Найдено объявлений: <b>{len(items)}</b>. Проверка email…",
-        parse_mode="HTML",
-    )
-    await _run_items(
-        message,
+    u = message.from_user
+    await run_void_validation(
         bot,
         settings,
+        u.id,
+        message.chat.id,
         items,
         status_message_id=status.message_id,
+        username=(u.username or "") if u else "",
     )
 
 
@@ -103,10 +77,12 @@ async def on_json_text(message: Message, bot, settings: Settings) -> None:
         await message.answer("В JSON нет объявлений (items).")
         return
 
-    await _run_items(
-        message,
+    u = message.from_user
+    await run_void_validation(
         bot,
         settings,
+        u.id,
+        message.chat.id,
         items,
-        status_text=f"🔎 Объявлений: <b>{len(items)}</b>. Проверка email…",
+        username=(u.username or "") if u else "",
     )
