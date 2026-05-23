@@ -62,12 +62,12 @@ async def main() -> None:
 
     logger.info("Старт imap_worker | %s", database_env_diag())
 
+    # Отдельный процесс = входящая почта всегда включена (не требуем ENABLE_INCOMING_MAIL в Railway).
     if not _truthy("ENABLE_INCOMING_MAIL"):
-        logger.error(
-            "ENABLE_INCOMING_MAIL не задан. %s",
-            database_env_diag(),
+        logger.warning(
+            "ENABLE_INCOMING_MAIL не задан в Railway — для imap_worker.py это нормально, "
+            "опрос IMAP всё равно запускается."
         )
-        sys.exit(1)
 
     wait_sec = int(os.getenv("DATABASE_URL_WAIT_SEC", "90"))
     for attempt in range(max(1, wait_sec // 15)):
