@@ -76,19 +76,21 @@
 
 13. **Replicas** = **1**
 
-14. **Variables** — ОБЯЗАТЕЛЬНО:
+14. **Variables** — только на сервисе imap-worker (не poputka88):
 
     BOT_TOKEN              = (тот же, что у бота)
-
-    DATABASE_URL           = **Reference → Postgres** (тот же сервис БД, что у poputka88!)
-                           НЕ оставляй пустым — иначе в логах:
-                           «total_mailboxes=0» и письма не приходят сами.
-
-    Проверка после деплоя в Logs imap-worker:
-                           IMAP DB (Postgres): … pollable=69  (или ваше число ящиков)
-                           НЕ должно быть: pollable=0
-
     ENABLE_INCOMING_MAIL   = 1
+
+    DATABASE_URL — если краш «нет PG переменных» или DATABASE_URL=<пустая>:
+      • Удалите пустой DATABASE_URL (строка в UI есть, значение пустое).
+      • Canvas: связь Postgres → imap-worker.
+      • Add Reference → Postgres → DATABASE_URL (не ${{...}} текстом).
+      • Redeploy.
+
+    В логах: DATABASE_URL=<ok>, pollable=69 (ваше число).
+
+    ПЛАН Б (письма сразу): poputka88 ENABLE_INCOMING_MAIL=1, убрать IMAP_DEDICATED_WORKER,
+    imap-worker остановить — IMAP на основном боте.
 
     MAX_IMAP_CONCURRENT    = 12
     INCOMING_POLL_SEC      = 60

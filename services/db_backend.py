@@ -80,9 +80,22 @@ def _database_url() -> str:
     return ""
 
 
+def _env_key_status(name: str) -> str:
+    if name not in os.environ:
+        return f"{name}=<нет в процессе>"
+    v = (os.environ.get(name) or "").strip()
+    if not v:
+        return f"{name}=<пустая строка>"
+    if _looks_like_unexpanded_reference(v):
+        return f"{name}=<шаблон ${{...}} не раскрыт>"
+    return f"{name}=<ok>"
+
+
 def database_env_diag() -> str:
-    """Для логов: какие ключи заданы (без значений)."""
-    names = (
+    """Для логов: статус переменных (без значений)."""
+    keys = (
+        "ENABLE_INCOMING_MAIL",
+        "BOT_TOKEN",
         "DATABASE_URL",
         "DATABASE_PRIVATE_URL",
         "PGHOST",
@@ -90,16 +103,9 @@ def database_env_diag() -> str:
         "PGPASSWORD",
         "PGDATABASE",
     )
-    found = []
-    for n in names:
-        v = (os.getenv(n) or "").strip()
-        if not v:
-            continue
-        if _looks_like_unexpanded_reference(v):
-            found.append(f"{n}=<шаблон не раскрыт>")
-        else:
-            found.append(f"{n}=<set>")
-    return ", ".join(found) if found else "(нет PG/DATABASE переменных в процессе)"
+    parts = [_env_key_status(n) for n in keys]
+    svc = (os.getenv("RAILWAY_SERVICE_NAME") or os.getenv("RAILWAY_SERVICE") or "?").strip()
+    return f"service={svc} env_keys={len(os.environ)} | " + ", ".join(parts)
 
 
 def is_postgres() -> bool:

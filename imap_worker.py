@@ -60,26 +60,42 @@ async def main() -> None:
         stream=sys.stdout,
     )
 
+    logger.info("Старт imap_worker | %s", database_env_diag())
+
     if not _truthy("ENABLE_INCOMING_MAIL"):
         logger.error(
-            "ENABLE_INCOMING_MAIL не задан. На сервисе imap-worker → Variables: ENABLE_INCOMING_MAIL=1"
+            "ENABLE_INCOMING_MAIL не задан. %s",
+            database_env_diag(),
+        )
+        sys.exit(1)
+
+    wait_sec = int(os.getenv("DATABASE_URL_WAIT_SEC", "90"))
+    for attempt in range(max(1, wait_sec // 15)):
+        if is_postgres():
+            break
+        logger.warning(
+            "PostgreSQL не найден (попытка %s). %s",
+            attempt + 1,
+            database_env_diag(),
+        )
+        await asyncio.sleep(15)
+    else:
+        logger.critical(
+            "PostgreSQL так и не появился (%s). %s\n"
+            "Частая причина на Railway: переменная DATABASE_URL есть в UI, но "
+            "<пустая строка> или <нет в процессе>. Удалите DATABASE_URL вручную → "
+            "на схеме проекта соедините Postgres с imap-worker → "
+            "Variables → Add Reference → Postgres.DATABASE_URL → Redeploy.\n"
+            "План Б (сразу письма в TG): на poputka88 уберите IMAP_DEDICATED_WORKER, "
+            "добавьте ENABLE_INCOMING_MAIL=1, остановите imap-worker.",
+            DB_PATH,
+            database_env_diag(),
         )
         sys.exit(1)
 
     settings = load_settings()
     await init_db()
     await seed_config_admins(settings.admin_ids)
-
-    if not is_postgres():
-        logger.critical(
-            "PostgreSQL не виден в процессе (%s). Переменные в контейнере: %s. "
-            "Откройте Variables именно у сервиса imap-worker (inspiring-beauty), "
-            "добавьте DATABASE_URL → Reference → Postgres (как у poputka88), "
-            "нажмите Deploy. Не вставляйте ${{Postgres...}} текстом — только Reference.",
-            DB_PATH,
-            database_env_diag(),
-        )
-        sys.exit(1)
 
     stats = await count_imap_poll_accounts_raw()
     logger.info(
