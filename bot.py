@@ -10,6 +10,7 @@ from handlers import setup_routers
 from middlewares.admin_only import AdminOnlyMiddleware
 from middlewares.settings import SettingsMiddleware
 from services.bot_commands import register_bot_commands
+from services.incoming_worker import start_incoming_mail_worker
 
 logging.basicConfig(level=logging.INFO, stream=sys.stdout)
 logger = logging.getLogger(__name__)
@@ -43,6 +44,7 @@ async def main() -> None:
         root.callback_query.middleware(mw)
     dp.include_router(root)
 
+    start_incoming_mail_worker(bot)
     logger.info("Bot started")
     await dp.start_polling(bot)
 

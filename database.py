@@ -154,6 +154,15 @@ async def init_db() -> None:
             "ALTER TABLE validated_leads ADD COLUMN email_norm TEXT NOT NULL DEFAULT ''",
             "ALTER TABLE validated_leads ADD COLUMN seller_key TEXT NOT NULL DEFAULT ''",
             "ALTER TABLE validated_leads ADD COLUMN title_key TEXT NOT NULL DEFAULT ''",
+            "ALTER TABLE smtp_accounts ADD COLUMN imap_last_uid INTEGER",
+            "ALTER TABLE incoming_mails ADD COLUMN body TEXT NOT NULL DEFAULT ''",
+            "ALTER TABLE incoming_mails ADD COLUMN account_email TEXT NOT NULL DEFAULT ''",
+            "ALTER TABLE incoming_mails ADD COLUMN product_title TEXT NOT NULL DEFAULT ''",
+            "ALTER TABLE incoming_mails ADD COLUMN service_label TEXT NOT NULL DEFAULT ''",
+            "ALTER TABLE incoming_mails ADD COLUMN photo_url TEXT NOT NULL DEFAULT ''",
+            "ALTER TABLE incoming_mails ADD COLUMN offer_price TEXT NOT NULL DEFAULT ''",
+            "ALTER TABLE incoming_mails ADD COLUMN tg_chat_id INTEGER",
+            "ALTER TABLE incoming_mails ADD COLUMN tg_message_id INTEGER",
         ):
             try:
                 await db.execute(stmt)
@@ -1156,6 +1165,160 @@ async def find_lead_by_seller_key(user_id: int, seller_key: str) -> dict | None:
             if seller_match_key(name) == skey:
                 return lead
     return None
+
+
+async def list_imap_poll_accounts() -> list[dict]:
+    """Аккаунты для IMAP-воркера (все enabled, в т.ч. smtp_blocked)."""
+    async with aiosqlite.connect(DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        cur = await db.execute(
+            """
+            SELECT id, user_id, sender_name, email, password, imap_host, imap_port,
+                   imap_last_uid
+            FROM smtp_accounts
+            WHERE enabled = 1 AND imap_host != ''
+            ORDER BY id
+            """
+        )
+        return [dict(r) for r in await cur.fetchall()]
+
+
+async def get_imap_last_uid(account_id: int) -> int | None:
+    async with aiosqlite.connect(DB_PATH) as db:
+        cur = await db.execute(
+            "SELECT imap_last_uid FROM smtp_accounts WHERE id = ?",
+            (account_id,),
+        )
+        row = await cur.fetchone()
+        if not row or row[0] is None:
+            return None
+        return int(row[0])
+
+
+async def set_imap_last_uid(account_id: int, uid: int) -> None:
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute(
+            "UPDATE smtp_accounts SET imap_last_uid = ? WHERE id = ?",
+            (int(uid), account_id),
+        )
+        await db.commit()
+
+
+async def incoming_mail_exists(account_id: int, imap_uid: str) -> bool:
+    async with aiosqlite.connect(DB_PATH) as db:
+        cur = await db.execute(
+            "SELECT 1 FROM incoming_mails WHERE account_id = ? AND imap_uid = ?",
+            (account_id, str(imap_uid)),
+        )
+        return await cur.fetchone() is not None
+
+
+async def count_incoming_from_sender(account_id: int, from_email: str) -> int:
+    email = from_email.strip().lower()
+    async with aiosqlite.connect(DB_PATH) as db:
+        cur = await db.execute(
+            """
+            SELECT COUNT(*) FROM incoming_mails
+            WHERE account_id = ? AND from_email = ?
+            """,
+            (account_id, email),
+        )
+        row = await cur.fetchone()
+        return int(row[0]) if row else 0
+
+
+async def insert_incoming_mail(
+    user_id: int,
+    account_id: int,
+    *,
+    imap_uid: str,
+    message_id: str,
+    account_email: str,
+    from_email: str,
+    from_name: str,
+    subject: str,
+    body: str,
+    lead_id: int | None,
+    product_title: str,
+    service_label: str,
+    photo_url: str,
+    offer_price: str,
+) -> int:
+    async with aiosqlite.connect(DB_PATH) as db:
+        cur = await db.execute(
+            """
+            INSERT INTO incoming_mails (
+                user_id, account_id, imap_uid, message_id, account_email,
+                from_email, from_name, subject, body, lead_id,
+                product_title, service_label, photo_url, offer_price, notified
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0)
+            """,
+            (
+                user_id,
+                account_id,
+                str(imap_uid),
+                (message_id or "")[:500],
+                account_email.strip().lower(),
+                from_email.strip().lower(),
+                (from_name or "")[:300],
+                (subject or "")[:1000],
+                body[:50000],
+                lead_id,
+                (product_title or "")[:500],
+                (service_label or "")[:120],
+                (photo_url or "")[:2000],
+                (offer_price or "")[:80],
+            ),
+        )
+        await db.commit()
+        return int(cur.lastrowid or 0)
+
+
+async def set_incoming_mail_tg_message(
+    incoming_id: int, user_id: int, *, chat_id: int, message_id: int
+) -> None:
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute(
+            """
+            UPDATE incoming_mails SET tg_chat_id = ?, tg_message_id = ?, notified = 1
+            WHERE id = ? AND user_id = ?
+            """,
+            (int(chat_id), int(message_id), incoming_id, user_id),
+        )
+        await db.commit()
+
+
+async def get_incoming_thread_reply_message_id(
+    account_id: int, from_email: str
+) -> int | None:
+    """tg_message_id первого письма в цепочке (для reply_to)."""
+    email = from_email.strip().lower()
+    async with aiosqlite.connect(DB_PATH) as db:
+        cur = await db.execute(
+            """
+            SELECT tg_message_id FROM incoming_mails
+            WHERE account_id = ? AND from_email = ?
+              AND tg_message_id IS NOT NULL
+            ORDER BY id ASC
+            LIMIT 1
+            """,
+            (account_id, email),
+        )
+        row = await cur.fetchone()
+        if row and row[0]:
+            return int(row[0])
+    return None
+
+
+async def get_incoming_mail(incoming_id: int, user_id: int) -> dict | None:
+    async with aiosqlite.connect(DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        cur = await db.execute(
+            "SELECT * FROM incoming_mails WHERE id = ? AND user_id = ?",
+            (incoming_id, user_id),
+        )
+        row = await cur.fetchone()
+        return dict(row) if row else None
 
 
 async def save_incoming_gag_link(
