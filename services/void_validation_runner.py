@@ -12,7 +12,12 @@ from typing import Any
 from aiogram import Bot
 
 from config import Settings
-from database import save_validated_lead
+from database import (
+    is_seller_blacklisted,
+    register_validated_seller,
+    save_validated_lead,
+    sync_seller_blacklist_from_leads,
+)
 from services.domain_list import get_validation_domains
 from services.seller_name import (
     display_local,
@@ -53,6 +58,7 @@ class _SharedStats:
     processed: int = 0
     skipped_short: int = 0
     skipped_dup_seller: int = 0
+    skipped_blacklist: int = 0
     no_valid: int = 0
     saved: int = 0
     errors: int = 0
@@ -90,6 +96,13 @@ async def _process_items_chunk(
             continue
 
         dedupe = seller_dedupe_key(item)
+        if dedupe and await is_seller_blacklisted(user_id, dedupe):
+            async with stats.lock:
+                stats.skipped_blacklist += 1
+            if processed % PROGRESS_EVERY == 0:
+                await on_progress()
+            continue
+
         async with stats.lock:
             if dedupe and dedupe in stats.batch_seen_sellers:
                 stats.skipped_dup_seller += 1
@@ -135,6 +148,13 @@ async def _process_items_chunk(
                 seller_key=seller_match_key(name),
                 title_key=title_match_key(ititle),
             )
+            if dedupe:
+                await register_validated_seller(
+                    user_id,
+                    seller_dedupe=dedupe,
+                    person_name=name,
+                    email=found_email,
+                )
             async with stats.lock:
                 if created:
                     stats.saved += 1
@@ -188,6 +208,8 @@ async def run_void_validation(
     _active_users.add(user_id)
     clear_stop_validation(user_id)
 
+    await sync_seller_blacklist_from_leads(user_id)
+
     total = len(items)
     stats = _SharedStats()
     last_edit = 0.0
@@ -212,6 +234,7 @@ async def run_void_validation(
             no_valid = stats.no_valid
             skipped_short = stats.skipped_short
             skipped_dup = stats.skipped_dup_seller
+            skipped_bl = stats.skipped_blacklist
             errors = stats.errors
             stopped = stats.stopped
 
@@ -232,7 +255,8 @@ async def run_void_validation(
             f"✅ Сохранено email: <b>{saved}</b>\n"
             f"📭 Без валидного email: <b>{no_valid}</b>\n"
             f"✂️ Короткое имя: <b>{skipped_short}</b>\n"
-            f"♻️ Повтор продавца: <b>{skipped_dup}</b>\n"
+            f"♻️ Повтор в файле: <b>{skipped_dup}</b>\n"
+            f"🚫 Чёрный список (уже валидирован): <b>{skipped_bl}</b>\n"
             f"⚠️ Ошибок API: <b>{errors}</b>\n"
             f"🌐 Доменов: <b>{len(domains)}</b>"
         )

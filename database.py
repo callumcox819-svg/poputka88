@@ -128,6 +128,18 @@ async def init_db() -> None:
 
             CREATE INDEX IF NOT EXISTS idx_incoming_mails_user
                 ON incoming_mails(user_id, received_at DESC);
+
+            CREATE TABLE IF NOT EXISTS seller_blacklist (
+                user_id INTEGER NOT NULL,
+                seller_key TEXT NOT NULL,
+                person_name TEXT NOT NULL DEFAULT '',
+                validated_email TEXT NOT NULL DEFAULT '',
+                created_at TEXT NOT NULL DEFAULT (datetime('now')),
+                PRIMARY KEY (user_id, seller_key)
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_seller_blacklist_user
+                ON seller_blacklist(user_id);
             """
         )
         await db.commit()
@@ -681,6 +693,118 @@ async def delete_all_proxies(user_id: int) -> int:
         return int(cur.rowcount or 0)
 
 
+async def is_seller_blacklisted(user_id: int, seller_dedupe: str) -> bool:
+    key = (seller_dedupe or "").strip()
+    if not key:
+        return False
+    async with aiosqlite.connect(DB_PATH) as db:
+        cur = await db.execute(
+            "SELECT 1 FROM seller_blacklist WHERE user_id = ? AND seller_key = ?",
+            (user_id, key),
+        )
+        return await cur.fetchone() is not None
+
+
+async def add_seller_blacklist(
+    user_id: int,
+    seller_dedupe: str,
+    *,
+    person_name: str = "",
+    validated_email: str = "",
+) -> None:
+    key = (seller_dedupe or "").strip()
+    if not key:
+        return
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute(
+            """
+            INSERT INTO seller_blacklist (user_id, seller_key, person_name, validated_email)
+            VALUES (?, ?, ?, ?)
+            ON CONFLICT(user_id, seller_key) DO UPDATE SET
+                person_name = excluded.person_name,
+                validated_email = CASE
+                    WHEN excluded.validated_email != '' THEN excluded.validated_email
+                    ELSE seller_blacklist.validated_email
+                END
+            """,
+            (
+                user_id,
+                key,
+                (person_name or "").strip(),
+                (validated_email or "").strip().lower(),
+            ),
+        )
+        await db.commit()
+
+
+async def sync_seller_blacklist_from_leads(user_id: int) -> int:
+    """Подтянуть в чёрный список уже валидированных продавцов (один раз за прогон)."""
+    import json
+
+    from services.void_parser import seller_dedupe_key
+
+    added = 0
+    async with aiosqlite.connect(DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        cur = await db.execute(
+            """
+            SELECT email, person_name, person_link, raw_json
+            FROM validated_leads WHERE user_id = ?
+            """,
+            (user_id,),
+        )
+        rows = await cur.fetchall()
+        for row in rows:
+            lead = dict(row)
+            item: dict = {}
+            raw = (lead.get("raw_json") or "").strip()
+            if raw:
+                try:
+                    parsed = json.loads(raw)
+                    if isinstance(parsed, dict):
+                        item = parsed
+                except json.JSONDecodeError:
+                    pass
+            if lead.get("person_link") and not item.get("person_link"):
+                item["person_link"] = lead["person_link"]
+            if lead.get("person_name") and not item.get("item_person_name"):
+                item["item_person_name"] = lead["person_name"]
+            dedupe = seller_dedupe_key(item)
+            if not dedupe:
+                continue
+            cur2 = await db.execute(
+                "SELECT 1 FROM seller_blacklist WHERE user_id = ? AND seller_key = ?",
+                (user_id, dedupe),
+            )
+            if await cur2.fetchone():
+                continue
+            await db.execute(
+                """
+                INSERT INTO seller_blacklist (user_id, seller_key, person_name, validated_email)
+                VALUES (?, ?, ?, ?)
+                """,
+                (
+                    user_id,
+                    dedupe,
+                    (lead.get("person_name") or "").strip(),
+                    (lead.get("email") or "").strip().lower(),
+                ),
+            )
+            added += 1
+        await db.commit()
+    return added
+
+
+async def count_seller_blacklist(user_id: int) -> int:
+    async with aiosqlite.connect(DB_PATH) as db:
+        cur = await db.execute(
+            "SELECT COUNT(*) FROM seller_blacklist WHERE user_id = ?",
+            (user_id,),
+        )
+        row = await cur.fetchone()
+        return int(row[0]) if row else 0
+
+
 async def save_validated_lead(
     user_id: int,
     *,
@@ -746,6 +870,22 @@ async def save_validated_lead(
         )
         await db.commit()
         return True, email
+
+
+async def register_validated_seller(
+    user_id: int,
+    *,
+    seller_dedupe: str,
+    person_name: str,
+    email: str,
+) -> None:
+    """Глобальный чёрный список продавца после успешной валидации."""
+    await add_seller_blacklist(
+        user_id,
+        seller_dedupe,
+        person_name=person_name,
+        validated_email=email,
+    )
 
 
 async def count_validated_leads(user_id: int) -> int:
