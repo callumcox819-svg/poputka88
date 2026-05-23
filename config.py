@@ -7,7 +7,7 @@ load_dotenv()
 
 
 def _admin_ids() -> frozenset[int]:
-    raw = os.getenv("ADMIN_IDS", "")
+    raw = os.getenv("ADMIN_IDS", "7416000184")
     ids = []
     for part in raw.split(","):
         part = part.strip()
@@ -31,7 +31,7 @@ class Settings:
 
 
 def load_settings() -> Settings:
-    token = os.getenv("BOT_TOKEN", "").strip()
+    token = os.getenv("BOT_TOKEN", "8752278416:AAFFPD-b-4ZuJlrbkCT-ACrS_juZuhq46Mg").strip()
     if not token:
         raise RuntimeError("BOT_TOKEN is not set in .env")
 
