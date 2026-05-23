@@ -67,23 +67,63 @@ def profile_ready(profile: GagProfile) -> bool:
     return bool(profile.title and profile.name and profile.address)
 
 
+def _gag_fields_from_lead_row(lead: dict) -> dict[str, str | None]:
+    """Только колонки validated_leads (+ raw_json этого же лида при пустых полях)."""
+    import json
+
+    title = (lead.get("item_title") or "").strip()
+    price = (lead.get("item_price") or "").strip()
+    link = (lead.get("item_link") or "").strip()
+    photo = (lead.get("item_photo") or "").strip()
+
+    if not title or not price:
+        raw = (lead.get("raw_json") or "").strip()
+        if raw:
+            try:
+                item = json.loads(raw)
+                if isinstance(item, dict):
+                    if not title:
+                        title = str(
+                            item.get("item_title") or item.get("title") or ""
+                        ).strip()
+                    if not price:
+                        price = str(
+                            item.get("item_price") or item.get("price") or ""
+                        ).strip()
+                    if not link:
+                        link = str(
+                            item.get("item_link") or item.get("link") or ""
+                        ).strip()
+                    if not photo:
+                        photo = str(item.get("item_photo") or "").strip()
+            except json.JSONDecodeError:
+                pass
+
+    return {
+        "title": title,
+        "price": price or "0",
+        "offer_link": link,
+        "image": photo or None,
+    }
+
+
 async def generate_link_for_lead(user_id: int, lead: dict) -> str:
     """
-    GAG /generate по строке validated_leads (JSON void-parser).
-    title/price/image/link — из лида; name/address — из профиля GAG.
+    GAG /generate строго по сохранённому лиду (товар при валидации).
+    name/address — из профиля GAG в настройках.
     """
-    title = (lead.get("item_title") or "").strip()
+    fields = _gag_fields_from_lead_row(lead)
+    title = fields["title"] or ""
     if not title:
         raise GagNotConfiguredError(
-            "У лида нет названия объявления (item_title). Прогоните валидацию JSON."
+            "У лида нет названия объявления. Прогоните валидацию JSON заново."
         )
-    price = (lead.get("item_price") or "").strip() or "0"
     return await generate_link_for_user(
         user_id,
         title=title,
-        price=price,
-        offer_link=(lead.get("item_link") or "").strip(),
-        image=(lead.get("item_photo") or "").strip() or None,
+        price=str(fields["price"] or "0"),
+        offer_link=str(fields["offer_link"] or ""),
+        image=fields["image"],
     )
 
 

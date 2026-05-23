@@ -1,21 +1,20 @@
-"""Поиск validated_leads для кнопки «Создать ссылку»."""
+"""
+Поиск лида для «Создать ссылку» — только тот товар, что в validated_leads.
+
+Чёрный список продавцов = один лид на продавца. Генерация не ищет по названию/имени
+(чтобы не подтянуть чужой товар), только:
+  lead_id → рассылка (recipients.lead_id) → email → тот же email без точек.
+"""
 
 from __future__ import annotations
 
 from dataclasses import dataclass
 
 from database import (
-    find_lead_by_email_norm,
-    find_lead_by_exact_email,
-    find_lead_by_offer_id,
-    find_lead_by_seller_key,
-    find_lead_by_title,
-)
-from services.lead_keys import (
-    email_norm_key,
-    offer_id_from_item,
-    seller_match_key,
-    title_match_key,
+    get_lead_for_mailing_recipient,
+    get_validated_lead_by_email,
+    get_validated_lead_by_id,
+    get_validated_lead_by_reply_email,
 )
 
 
@@ -28,65 +27,33 @@ class LeadResolveResult:
 async def resolve_validated_lead(
     user_id: int,
     *,
+    lead_id: int | None = None,
     contact_email: str = "",
-    subject: str = "",
-    from_name: str = "",
-    item_title: str = "",
-    offer_id: int | None = None,
+    campaign_id: int | None = None,
 ) -> LeadResolveResult | None:
-    """
-    Порядок (как в happy88 — надёжные ключи первыми):
-    1) offer_id
-    2) email точный
-    3) email «мягкий» (без точек в local-part)
-    4) название товара (item_title / тема)
-    5) имя продавца (From / item_person_name в БД)
-    """
     uid = int(user_id)
 
-    if offer_id and int(offer_id) > 0:
-        lead = await find_lead_by_offer_id(uid, int(offer_id))
+    if lead_id and int(lead_id) > 0:
+        lead = await get_validated_lead_by_id(uid, int(lead_id))
         if lead:
-            return LeadResolveResult(lead=lead, matched_by="offer_id")
+            return LeadResolveResult(lead=lead, matched_by="lead_id")
 
     email = (contact_email or "").strip().lower()
-    if email:
-        lead = await find_lead_by_exact_email(uid, email)
-        if lead:
-            return LeadResolveResult(lead=lead, matched_by="email")
+    if not email:
+        return None
 
-        norm = email_norm_key(email)
-        if norm:
-            lead = await find_lead_by_email_norm(uid, norm)
-            if lead:
-                return LeadResolveResult(lead=lead, matched_by="email_fuzzy")
+    lead = await get_lead_for_mailing_recipient(
+        uid, email, campaign_id=campaign_id
+    )
+    if lead:
+        return LeadResolveResult(lead=lead, matched_by="mailing")
 
-    for title_src in (item_title, subject):
-        tkey = title_match_key(title_src)
-        if not tkey:
-            continue
-        lead = await find_lead_by_title(uid, tkey)
-        if lead:
-            return LeadResolveResult(lead=lead, matched_by="item_title")
+    lead = await get_validated_lead_by_email(uid, email)
+    if lead:
+        return LeadResolveResult(lead=lead, matched_by="email")
 
-    for name_src in (from_name,):
-        skey = seller_match_key(name_src)
-        if not skey:
-            continue
-        lead = await find_lead_by_seller_key(uid, skey)
-        if lead:
-            return LeadResolveResult(lead=lead, matched_by="seller_name")
+    lead = await get_validated_lead_by_reply_email(uid, email)
+    if lead:
+        return LeadResolveResult(lead=lead, matched_by="email_fuzzy")
 
-    return None
-
-
-def offer_id_from_mail_meta(
-    *,
-    offer_id: int | None = None,
-    item: dict | None = None,
-) -> int | None:
-    if offer_id and int(offer_id) > 0:
-        return int(offer_id)
-    if item:
-        return offer_id_from_item(item)
     return None

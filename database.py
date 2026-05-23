@@ -910,8 +910,97 @@ async def list_validated_emails(user_id: int, *, limit: int = 10000) -> list[str
         return [str(r[0]) for r in await cur.fetchall()]
 
 
+async def get_lead_for_mailing_recipient(
+    user_id: int,
+    contact_email: str,
+    *,
+    campaign_id: int | None = None,
+) -> dict | None:
+    """
+    Лид, привязанный к рассылке: recipients.lead_id для отправленного письма.
+    Это 100% тот товар, который ушёл в кампании.
+    """
+    email = contact_email.strip().lower()
+    if not email:
+        return None
+    async with aiosqlite.connect(DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        if campaign_id:
+            cur = await db.execute(
+                """
+                SELECT vl.* FROM recipients r
+                JOIN campaigns c ON c.id = r.campaign_id
+                JOIN validated_leads vl ON vl.id = r.lead_id
+                WHERE c.user_id = ? AND r.email = ? AND r.campaign_id = ?
+                  AND r.status = 'sent' AND r.lead_id IS NOT NULL
+                ORDER BY r.sent_at DESC, r.id DESC
+                LIMIT 1
+                """,
+                (user_id, email, int(campaign_id)),
+            )
+        else:
+            cur = await db.execute(
+                """
+                SELECT vl.* FROM recipients r
+                JOIN campaigns c ON c.id = r.campaign_id
+                JOIN validated_leads vl ON vl.id = r.lead_id
+                WHERE c.user_id = ? AND r.email = ? AND r.status = 'sent'
+                  AND r.lead_id IS NOT NULL
+                ORDER BY r.sent_at DESC, r.id DESC
+                LIMIT 1
+                """,
+                (user_id, email),
+            )
+        row = await cur.fetchone()
+        return dict(row) if row else None
+
+
+async def get_validated_lead_by_reply_email(
+    user_id: int, reply_email: str
+) -> dict | None:
+    """
+    Ответ с другого адреса того же ящика (Maria.Johansen vs MariaJohansen).
+    Сопоставление по email_norm валидированной почты, не по названию товара.
+    """
+    from services.lead_keys import email_norm_key
+
+    norm = email_norm_key(reply_email)
+    if not norm:
+        return None
+    async with aiosqlite.connect(DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        cur = await db.execute(
+            """
+            SELECT * FROM validated_leads
+            WHERE user_id = ? AND email_norm = ?
+            LIMIT 2
+            """,
+            (user_id, norm),
+        )
+        rows = [dict(r) for r in await cur.fetchall()]
+    if len(rows) == 1:
+        return rows[0]
+    if len(rows) > 1:
+        return None
+    async with aiosqlite.connect(DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        cur = await db.execute(
+            "SELECT * FROM validated_leads WHERE user_id = ?",
+            (user_id,),
+        )
+        all_rows = await cur.fetchall()
+    matches = []
+    for row in all_rows:
+        lead = dict(row)
+        if email_norm_key(lead.get("email") or "") == norm:
+            matches.append(lead)
+    if len(matches) == 1:
+        return matches[0]
+    return None
+
+
 async def get_validated_lead_by_email(user_id: int, email: str) -> dict | None:
-    """Лид по email продавца (тот же, что в рассылке / ответе)."""
+    """Лид по email продавца (валидированная почта в БД)."""
     email = email.strip().lower()
     async with aiosqlite.connect(DB_PATH) as db:
         db.row_factory = aiosqlite.Row

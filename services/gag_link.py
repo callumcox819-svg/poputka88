@@ -1,7 +1,7 @@
 """
-Создание GAG-ссылки по кнопке «Создать ссылку» (без автогенерации).
+Создание GAG-ссылки по кнопке «Создать ссылку».
 
-Поиск лида: offer_id → email → email без точек → название → имя продавца.
+Только строка validated_leads из рассылки / ответа (без поиска по названию товара).
 """
 
 from __future__ import annotations
@@ -24,6 +24,7 @@ class GagLinkResult:
     ad_id: str | None
     lead_id: int
     contact_email: str
+    item_title: str
     matched_by: str
 
 
@@ -31,38 +32,25 @@ async def create_gag_link_for_incoming(
     user_id: int,
     *,
     contact_email: str = "",
-    subject: str = "",
-    from_name: str = "",
-    item_title: str = "",
-    offer_id: int | None = None,
+    campaign_id: int | None = None,
+    lead_id: int | None = None,
     incoming_mail_id: int | None = None,
 ) -> GagLinkResult:
     """
-    Ссылка строго по данным validated_leads.
-    Письмо сопоставляется по email / fuzzy email / title / seller / offer_id.
+    Генерация строго по лиду из БД (товар при валидации + рассылка).
+    contact_email — From входящего или email из рассылки.
     """
     resolved = await resolve_validated_lead(
         user_id,
+        lead_id=lead_id,
         contact_email=contact_email,
-        subject=subject,
-        from_name=from_name,
-        item_title=item_title,
-        offer_id=offer_id,
+        campaign_id=campaign_id,
     )
     if not resolved:
-        hints = []
-        if contact_email:
-            hints.append(f"email: {contact_email.strip().lower()}")
-        if item_title:
-            hints.append(f"товар: {item_title[:80]}")
-        if from_name:
-            hints.append(f"имя: {from_name[:80]}")
-        if offer_id:
-            hints.append(f"offer_id: {offer_id}")
-        extra = (" (" + ", ".join(hints) + ")") if hints else ""
+        em = (contact_email or "").strip().lower() or "—"
         raise GagNotConfiguredError(
-            "Не найден лид в БД для этого письма" + extra + ". "
-            "Нужна валидация JSON с этим продавцом/товаром."
+            f"Нет валидированного лида для <code>{em}</code>.\n"
+            "Нужна валидация этого продавца (или ответ с почты из рассылки)."
         )
 
     lead = resolved.lead
@@ -80,11 +68,13 @@ async def create_gag_link_for_incoming(
             gag_ad_id=ad_id or "",
         )
 
+    canonical_email = str(lead.get("email") or "").strip().lower()
     return GagLinkResult(
         url=url,
         ad_id=ad_id,
         lead_id=int(lead["id"]),
-        contact_email=str(lead.get("email") or contact_email.strip().lower()),
+        contact_email=canonical_email or contact_email.strip().lower(),
+        item_title=(lead.get("item_title") or "").strip(),
         matched_by=resolved.matched_by,
     )
 
@@ -93,20 +83,15 @@ async def create_gag_link_for_contact(
     user_id: int,
     contact_email: str,
     *,
+    campaign_id: int | None = None,
+    lead_id: int | None = None,
     incoming_mail_id: int | None = None,
-    subject: str = "",
-    from_name: str = "",
-    item_title: str = "",
-    offer_id: int | None = None,
 ) -> GagLinkResult:
-    """Обёртка: только email + опциональные подсказки с карточки письма."""
     return await create_gag_link_for_incoming(
         user_id,
         contact_email=contact_email,
-        subject=subject,
-        from_name=from_name,
-        item_title=item_title,
-        offer_id=offer_id,
+        campaign_id=campaign_id,
+        lead_id=lead_id,
         incoming_mail_id=incoming_mail_id,
     )
 
@@ -117,28 +102,8 @@ async def create_gag_link_for_lead_id(
     *,
     incoming_mail_id: int | None = None,
 ) -> GagLinkResult:
-    lead = await get_validated_lead_by_id(user_id, lead_id)
-    if not lead:
-        raise GagNotConfiguredError("Лид не найден в БД.")
-
-    try:
-        url = await generate_link_for_lead(user_id, lead)
-    except GAGError as exc:
-        raise GagNotConfiguredError(str(exc)) from exc
-
-    ad_id = ad_id_from_url(url)
-    if incoming_mail_id:
-        await save_incoming_gag_link(
-            incoming_mail_id,
-            user_id,
-            url=url,
-            gag_ad_id=ad_id or "",
-        )
-
-    return GagLinkResult(
-        url=url,
-        ad_id=ad_id,
-        lead_id=int(lead["id"]),
-        contact_email=str(lead.get("email") or ""),
-        matched_by="lead_id",
+    return await create_gag_link_for_incoming(
+        user_id,
+        lead_id=lead_id,
+        incoming_mail_id=incoming_mail_id,
     )
