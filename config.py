@@ -9,7 +9,7 @@
 #  ВСТАВЬ СВОИ ЗНАЧЕНИЯ СЮДА
 # ═══════════════════════════════════════════════════════════════════════════════
 
-BOT_TOKEN = "8752278416:AAFFPD-b-4ZuJlrbkCT-ACrS_juZuhq46Mg"  # токен от @BotFather
+BOT_TOKEN = "8752278416:AAGY-wi5OHE-OWibD0ZJLflGPF_zYzhal3s"  # токен от @BotFather
 
 ADMIN_IDS = "7416000184"  # твой Telegram ID
 
