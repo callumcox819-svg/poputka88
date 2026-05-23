@@ -14,8 +14,7 @@ BOT_COMMANDS: list[BotCommand] = [
     BotCommand(command="start", description="Запуск бота и меню"),
     BotCommand(command="send", description="Запустить рассылку"),
     BotCommand(command="stop", description="Остановить рассылку"),
-    BotCommand(command="validate", description="Валидация JSON / email"),
-    BotCommand(command="stopcheck", description="Остановить проверку"),
+    BotCommand(command="stopcheck", description="Остановить проверку JSON"),
     BotCommand(command="imap_check", description="Проверка входящих IMAP"),
     BotCommand(command="stat", description="Статус рассылки"),
 ]
@@ -50,7 +49,6 @@ async def register_bot_commands(bot: Bot, *, chat_id: int | None = None) -> None
 BOTFATHER_COMMANDS_TEXT = """start - Запуск бота и меню
 send - Запустить рассылку
 stop - Остановить рассылку
-validate - Валидация JSON / email
-stopcheck - Остановить проверку
+stopcheck - Остановить проверку JSON
 imap_check - Проверка входящих IMAP
 stat - Статус рассылки"""

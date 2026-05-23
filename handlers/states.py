@@ -13,7 +13,3 @@ class QuickAdd(StatesGroup):
     sender_name = State()
     accounts = State()
 
-
-class EmailValidation(StatesGroup):
-    waiting_list = State()
-

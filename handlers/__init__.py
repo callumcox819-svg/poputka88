@@ -10,7 +10,7 @@ from handlers.proxies import router as proxies_router
 from handlers.templates import router as templates_router
 from handlers.start import router as start_router
 from handlers.status import router as status_router
-from handlers.validation import router as validation_router
+from handlers.json_incoming import router as json_incoming_router
 from handlers.incoming_mail import router as incoming_mail_router
 
 
@@ -25,7 +25,7 @@ def setup_routers() -> Router:
     root.include_router(templates_router)
     root.include_router(settings_accounts_router)
     root.include_router(accounts_router)
-    root.include_router(validation_router)
     root.include_router(mailing_router)
     root.include_router(incoming_mail_router)
+    root.include_router(json_incoming_router)
     return root

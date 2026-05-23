@@ -9,7 +9,7 @@ from handlers.mailing import begin_new_campaign, launch_campaign
 from handlers.settings import match_settings_menu_text, open_settings_menu
 from keyboards.main_menu import BTN_START_MAIL, BTN_STOP_MAIL, main_keyboard
 from services.campaign_runner import stop_user_mailings
-from services.validation_runner import stop_validation
+from services.void_validation_runner import stop_void_validation
 
 router = Router()
 
@@ -28,7 +28,7 @@ async def cmd_stop(message: Message) -> None:
 
 @router.message(Command("stopcheck"))
 async def cmd_stopcheck(message: Message) -> None:
-    if stop_validation(message.from_user.id):
+    if stop_void_validation(message.from_user.id):
         await message.answer("Остановка проверки…", reply_markup=main_keyboard())
     else:
         await message.answer("Проверка не запущена.", reply_markup=main_keyboard())
@@ -73,9 +73,3 @@ async def btn_start_mail(message: Message, state: FSMContext, settings: Settings
 async def btn_settings(message: Message, state: FSMContext) -> None:
     await open_settings_menu(message, state)
 
-
-@router.message(F.text == "📧 Валидация")
-async def btn_validate(message: Message, state: FSMContext) -> None:
-    from handlers.validation import cmd_validate
-
-    await cmd_validate(message, state)

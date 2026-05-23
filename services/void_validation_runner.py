@@ -169,6 +169,15 @@ async def _process_items_chunk(
             await on_progress()
 
 
+def stop_void_validation(user_id: int) -> bool:
+    if user_id not in _active_users:
+        return False
+    from services.task_control import request_stop_validation
+
+    request_stop_validation(user_id)
+    return True
+
+
 async def run_void_validation(
     bot: Bot,
     settings: Settings,
