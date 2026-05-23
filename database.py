@@ -198,7 +198,7 @@ async def create_campaign(
     is_html: bool,
     encoding: str,
 ) -> int:
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with db_connect() as db:
         cur = await db.execute(
             """
             INSERT INTO campaigns (user_id, subject, body, is_html, encoding)
@@ -304,8 +304,7 @@ async def set_user_blob(user_id: int, blob_key: str, data: object) -> None:
 
 
 async def get_latest_ready_campaign(user_id: int) -> dict | None:
-    async with aiosqlite.connect(DB_PATH) as db:
-        db.row_factory = aiosqlite.Row
+    async with db_connect() as db:
         cur = await db.execute(
             """
             SELECT * FROM campaigns
@@ -334,8 +333,7 @@ async def append_emails_to_running_campaign(user_id: int, emails: list[str]) -> 
 
 
 async def get_running_campaign(user_id: int) -> dict | None:
-    async with aiosqlite.connect(DB_PATH) as db:
-        db.row_factory = aiosqlite.Row
+    async with db_connect() as db:
         cur = await db.execute(
             """
             SELECT * FROM campaigns
@@ -349,7 +347,7 @@ async def get_running_campaign(user_id: int) -> dict | None:
 
 
 async def pending_recipients(campaign_id: int, limit: int = 50) -> list[str]:
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with db_connect() as db:
         cur = await db.execute(
             """
             SELECT email FROM recipients
@@ -363,7 +361,7 @@ async def pending_recipients(campaign_id: int, limit: int = 50) -> list[str]:
 
 async def mark_sent(campaign_id: int, email: str) -> None:
     email = email.strip().lower()
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with db_connect() as db:
         cur = await db.execute(
             "SELECT user_id FROM campaigns WHERE id = ?", (campaign_id,)
         )
@@ -393,7 +391,7 @@ async def mark_sent(campaign_id: int, email: str) -> None:
 
 
 async def mark_failed(campaign_id: int, email: str, error: str) -> None:
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with db_connect() as db:
         await db.execute(
             """
             UPDATE recipients SET status = 'failed', error = ?
@@ -409,7 +407,7 @@ async def mark_failed(campaign_id: int, email: str, error: str) -> None:
 
 
 async def set_campaign_status(campaign_id: int, status: str) -> None:
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with db_connect() as db:
         await db.execute(
             "UPDATE campaigns SET status = ? WHERE id = ?",
             (status, campaign_id),
@@ -418,7 +416,7 @@ async def set_campaign_status(campaign_id: int, status: str) -> None:
 
 
 async def pause_running_campaigns(user_id: int) -> list[int]:
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with db_connect() as db:
         cur = await db.execute(
             "SELECT id FROM campaigns WHERE user_id = ? AND status = 'running'",
             (user_id,),
@@ -449,7 +447,7 @@ async def upsert_smtp_account(
     provider: str = "",
 ) -> int:
     email = email.lower()
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with db_connect() as db:
         cur = await db.execute(
             "SELECT id FROM smtp_accounts WHERE user_id = ? AND email = ?",
             (user_id, email),
@@ -501,7 +499,7 @@ async def upsert_smtp_account(
 
 
 async def set_user_sender_name(user_id: int, sender_name: str) -> None:
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with db_connect() as db:
         await db.execute(
             """
             INSERT INTO user_prefs (user_id, sender_name) VALUES (?, ?)
@@ -513,7 +511,7 @@ async def set_user_sender_name(user_id: int, sender_name: str) -> None:
 
 
 async def get_user_sender_name(user_id: int) -> str:
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with db_connect() as db:
         cur = await db.execute(
             "SELECT sender_name FROM user_prefs WHERE user_id = ?",
             (user_id,),
@@ -523,8 +521,7 @@ async def get_user_sender_name(user_id: int) -> str:
 
 
 async def get_last_campaign(user_id: int) -> dict | None:
-    async with aiosqlite.connect(DB_PATH) as db:
-        db.row_factory = aiosqlite.Row
+    async with db_connect() as db:
         cur = await db.execute(
             """
             SELECT * FROM campaigns WHERE user_id = ?
@@ -551,8 +548,7 @@ def _smtp_account_cols(*, with_secrets: bool) -> str:
 
 async def list_smtp_accounts(user_id: int, *, with_secrets: bool = False) -> list[dict]:
     """Все активные ящики (IMAP + список в настройках)."""
-    async with aiosqlite.connect(DB_PATH) as db:
-        db.row_factory = aiosqlite.Row
+    async with db_connect() as db:
         cur = await db.execute(
             f"""
             SELECT {_smtp_account_cols(with_secrets=with_secrets)}
@@ -568,8 +564,7 @@ async def list_smtp_mailing_accounts(
     user_id: int, *, with_secrets: bool = False
 ) -> list[dict]:
     """Ящики, с которых можно слать рассылку (не smtp_blocked)."""
-    async with aiosqlite.connect(DB_PATH) as db:
-        db.row_factory = aiosqlite.Row
+    async with db_connect() as db:
         cur = await db.execute(
             f"""
             SELECT {_smtp_account_cols(with_secrets=with_secrets)}
@@ -585,7 +580,7 @@ async def list_smtp_mailing_accounts(
 async def mark_account_smtp_blocked(
     user_id: int, account_id: int, reason: str
 ) -> bool:
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with db_connect() as db:
         cur = await db.execute(
             """
             UPDATE smtp_accounts
@@ -601,7 +596,7 @@ async def mark_account_smtp_blocked(
 async def disable_account_fully(
     user_id: int, account_id: int, reason: str
 ) -> bool:
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with db_connect() as db:
         cur = await db.execute(
             """
             UPDATE smtp_accounts
@@ -615,8 +610,7 @@ async def disable_account_fully(
 
 
 async def get_smtp_account(account_id: int, user_id: int) -> dict | None:
-    async with aiosqlite.connect(DB_PATH) as db:
-        db.row_factory = aiosqlite.Row
+    async with db_connect() as db:
         cur = await db.execute(
             "SELECT * FROM smtp_accounts WHERE id = ? AND user_id = ?",
             (account_id, user_id),
@@ -676,7 +670,7 @@ async def delete_all_smtp_accounts(user_id: int) -> int:
 
 
 async def count_smtp_accounts(user_id: int) -> int:
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with db_connect() as db:
         cur = await db.execute(
             "SELECT COUNT(*) FROM smtp_accounts WHERE user_id = ? AND enabled = 1",
             (user_id,),
@@ -686,7 +680,7 @@ async def count_smtp_accounts(user_id: int) -> int:
 
 
 async def count_smtp_mailing_accounts(user_id: int) -> int:
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with db_connect() as db:
         cur = await db.execute(
             """
             SELECT COUNT(*) FROM smtp_accounts
@@ -699,7 +693,7 @@ async def count_smtp_mailing_accounts(user_id: int) -> int:
 
 
 async def get_user_delay(user_id: int, default: float) -> float:
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with db_connect() as db:
         cur = await db.execute(
             "SELECT send_delay FROM user_prefs WHERE user_id = ?",
             (user_id,),
@@ -711,7 +705,7 @@ async def get_user_delay(user_id: int, default: float) -> float:
 
 
 async def set_user_delay(user_id: int, delay: float) -> None:
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with db_connect() as db:
         await db.execute(
             """
             INSERT INTO user_prefs (user_id, send_delay) VALUES (?, ?)
@@ -723,7 +717,7 @@ async def set_user_delay(user_id: int, delay: float) -> None:
 
 
 async def count_proxies(user_id: int) -> int:
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with db_connect() as db:
         cur = await db.execute(
             "SELECT COUNT(*) FROM proxies WHERE user_id = ?",
             (user_id,),
@@ -733,8 +727,7 @@ async def count_proxies(user_id: int) -> int:
 
 
 async def list_proxies(user_id: int) -> list[dict]:
-    async with aiosqlite.connect(DB_PATH) as db:
-        db.row_factory = aiosqlite.Row
+    async with db_connect() as db:
         cur = await db.execute(
             """
             SELECT id, host, port, username, password, proxy_type, is_active, last_error, created_at
@@ -748,8 +741,7 @@ async def list_proxies(user_id: int) -> list[dict]:
 
 async def list_sendable_proxies(user_id: int) -> list[dict]:
     """SOCKS5 для рассылки: не помечены мёртвыми (is_active != 0)."""
-    async with aiosqlite.connect(DB_PATH) as db:
-        db.row_factory = aiosqlite.Row
+    async with db_connect() as db:
         cur = await db.execute(
             """
             SELECT id, host, port, username, password, proxy_type, is_active, last_error
@@ -773,7 +765,7 @@ async def add_proxy(
     is_active: int | None = None,
     last_error: str | None = None,
 ) -> int:
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with db_connect() as db:
         cur = await db.execute(
             """
             INSERT INTO proxies (user_id, host, port, username, password, proxy_type, is_active, last_error)
@@ -801,7 +793,7 @@ async def update_proxy_status(
     is_active: int | None,
     last_error: str | None,
 ) -> None:
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with db_connect() as db:
         await db.execute(
             """
             UPDATE proxies SET is_active = ?, last_error = ?
@@ -813,7 +805,7 @@ async def update_proxy_status(
 
 
 async def delete_proxy(user_id: int, proxy_id: int) -> bool:
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with db_connect() as db:
         cur = await db.execute(
             "DELETE FROM proxies WHERE id = ? AND user_id = ?",
             (proxy_id, user_id),
@@ -823,7 +815,7 @@ async def delete_proxy(user_id: int, proxy_id: int) -> bool:
 
 
 async def delete_all_proxies(user_id: int) -> int:
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with db_connect() as db:
         cur = await db.execute("DELETE FROM proxies WHERE user_id = ?", (user_id,))
         await db.commit()
         return int(cur.rowcount or 0)
@@ -833,7 +825,7 @@ async def is_seller_blacklisted(user_id: int, seller_dedupe: str) -> bool:
     key = (seller_dedupe or "").strip()
     if not key:
         return False
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with db_connect() as db:
         cur = await db.execute(
             "SELECT 1 FROM seller_blacklist WHERE user_id = ? AND seller_key = ?",
             (user_id, key),
@@ -851,7 +843,7 @@ async def add_seller_blacklist(
     key = (seller_dedupe or "").strip()
     if not key:
         return
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with db_connect() as db:
         await db.execute(
             """
             INSERT INTO seller_blacklist (user_id, seller_key, person_name, validated_email)
@@ -880,8 +872,7 @@ async def sync_seller_blacklist_from_leads(user_id: int) -> int:
     from services.void_parser import seller_dedupe_key
 
     added = 0
-    async with aiosqlite.connect(DB_PATH) as db:
-        db.row_factory = aiosqlite.Row
+    async with db_connect() as db:
         cur = await db.execute(
             """
             SELECT email, person_name, person_link, raw_json
@@ -932,7 +923,7 @@ async def sync_seller_blacklist_from_leads(user_id: int) -> int:
 
 
 async def count_seller_blacklist(user_id: int) -> int:
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with db_connect() as db:
         cur = await db.execute(
             "SELECT COUNT(*) FROM seller_blacklist WHERE user_id = ?",
             (user_id,),
@@ -970,7 +961,7 @@ async def save_validated_lead(
         seller_key = seller_match_key(person_name)
     if not title_key:
         title_key = title_match_key(item_title)
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with db_connect() as db:
         cur = await db.execute(
             "SELECT id FROM validated_leads WHERE user_id = ? AND email = ?",
             (user_id, email),
@@ -1025,7 +1016,7 @@ async def register_validated_seller(
 
 
 async def count_validated_leads(user_id: int) -> int:
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with db_connect() as db:
         cur = await db.execute(
             "SELECT COUNT(*) FROM validated_leads WHERE user_id = ?",
             (user_id,),
@@ -1035,7 +1026,7 @@ async def count_validated_leads(user_id: int) -> int:
 
 
 async def list_validated_emails(user_id: int, *, limit: int = 10000) -> list[str]:
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with db_connect() as db:
         cur = await db.execute(
             """
             SELECT email FROM validated_leads WHERE user_id = ?
@@ -1059,8 +1050,7 @@ async def get_lead_for_mailing_recipient(
     email = contact_email.strip().lower()
     if not email:
         return None
-    async with aiosqlite.connect(DB_PATH) as db:
-        db.row_factory = aiosqlite.Row
+    async with db_connect() as db:
         if campaign_id:
             cur = await db.execute(
                 """
@@ -1103,8 +1093,7 @@ async def get_validated_lead_by_reply_email(
     norm = email_norm_key(reply_email)
     if not norm:
         return None
-    async with aiosqlite.connect(DB_PATH) as db:
-        db.row_factory = aiosqlite.Row
+    async with db_connect() as db:
         cur = await db.execute(
             """
             SELECT * FROM validated_leads
@@ -1118,8 +1107,7 @@ async def get_validated_lead_by_reply_email(
         return rows[0]
     if len(rows) > 1:
         return None
-    async with aiosqlite.connect(DB_PATH) as db:
-        db.row_factory = aiosqlite.Row
+    async with db_connect() as db:
         cur = await db.execute(
             "SELECT * FROM validated_leads WHERE user_id = ?",
             (user_id,),
@@ -1138,8 +1126,7 @@ async def get_validated_lead_by_reply_email(
 async def get_validated_lead_by_email(user_id: int, email: str) -> dict | None:
     """Лид по email продавца (валидированная почта в БД)."""
     email = email.strip().lower()
-    async with aiosqlite.connect(DB_PATH) as db:
-        db.row_factory = aiosqlite.Row
+    async with db_connect() as db:
         cur = await db.execute(
             "SELECT * FROM validated_leads WHERE user_id = ? AND email = ?",
             (user_id, email),
@@ -1149,8 +1136,7 @@ async def get_validated_lead_by_email(user_id: int, email: str) -> dict | None:
 
 
 async def get_validated_lead_by_id(user_id: int, lead_id: int) -> dict | None:
-    async with aiosqlite.connect(DB_PATH) as db:
-        db.row_factory = aiosqlite.Row
+    async with db_connect() as db:
         cur = await db.execute(
             "SELECT * FROM validated_leads WHERE user_id = ? AND id = ?",
             (user_id, lead_id),
@@ -1167,8 +1153,7 @@ async def find_lead_by_email_norm(user_id: int, email_norm: str) -> dict | None:
     norm = (email_norm or "").strip().lower()
     if not norm:
         return None
-    async with aiosqlite.connect(DB_PATH) as db:
-        db.row_factory = aiosqlite.Row
+    async with db_connect() as db:
         cur = await db.execute(
             """
             SELECT * FROM validated_leads WHERE user_id = ? AND email_norm = ?
@@ -1200,8 +1185,7 @@ async def find_lead_by_offer_id(user_id: int, offer_id: int) -> dict | None:
     oid = int(offer_id)
     if oid <= 0:
         return None
-    async with aiosqlite.connect(DB_PATH) as db:
-        db.row_factory = aiosqlite.Row
+    async with db_connect() as db:
         cur = await db.execute(
             """
             SELECT * FROM validated_leads
@@ -1233,8 +1217,7 @@ async def find_lead_by_title(user_id: int, title_key: str) -> dict | None:
     tkey = (title_key or "").strip()
     if not tkey:
         return None
-    async with aiosqlite.connect(DB_PATH) as db:
-        db.row_factory = aiosqlite.Row
+    async with db_connect() as db:
         cur = await db.execute(
             """
             SELECT * FROM validated_leads
@@ -1264,8 +1247,7 @@ async def find_lead_by_seller_key(user_id: int, seller_key: str) -> dict | None:
     skey = (seller_key or "").strip().lower()
     if not skey:
         return None
-    async with aiosqlite.connect(DB_PATH) as db:
-        db.row_factory = aiosqlite.Row
+    async with db_connect() as db:
         cur = await db.execute(
             """
             SELECT * FROM validated_leads
@@ -1296,8 +1278,7 @@ async def find_lead_by_seller_key(user_id: int, seller_key: str) -> dict | None:
 
 async def list_imap_poll_accounts() -> list[dict]:
     """Аккаунты для IMAP-воркера (все enabled, в т.ч. smtp_blocked)."""
-    async with aiosqlite.connect(DB_PATH) as db:
-        db.row_factory = aiosqlite.Row
+    async with db_connect() as db:
         cur = await db.execute(
             """
             SELECT id, user_id, sender_name, email, password, imap_host, imap_port,
@@ -1311,7 +1292,7 @@ async def list_imap_poll_accounts() -> list[dict]:
 
 
 async def get_imap_last_uid(account_id: int) -> int | None:
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with db_connect() as db:
         cur = await db.execute(
             "SELECT imap_last_uid FROM smtp_accounts WHERE id = ?",
             (account_id,),
@@ -1323,7 +1304,7 @@ async def get_imap_last_uid(account_id: int) -> int | None:
 
 
 async def set_imap_last_uid(account_id: int, uid: int) -> None:
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with db_connect() as db:
         await db.execute(
             "UPDATE smtp_accounts SET imap_last_uid = ? WHERE id = ?",
             (int(uid), account_id),
@@ -1332,7 +1313,7 @@ async def set_imap_last_uid(account_id: int, uid: int) -> None:
 
 
 async def incoming_mail_exists(account_id: int, imap_uid: str) -> bool:
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with db_connect() as db:
         cur = await db.execute(
             "SELECT 1 FROM incoming_mails WHERE account_id = ? AND imap_uid = ?",
             (account_id, str(imap_uid)),
@@ -1342,7 +1323,7 @@ async def incoming_mail_exists(account_id: int, imap_uid: str) -> bool:
 
 async def count_incoming_from_sender(account_id: int, from_email: str) -> int:
     email = from_email.strip().lower()
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with db_connect() as db:
         cur = await db.execute(
             """
             SELECT COUNT(*) FROM incoming_mails
@@ -1371,7 +1352,7 @@ async def insert_incoming_mail(
     photo_url: str,
     offer_price: str,
 ) -> int:
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with db_connect() as db:
         cur = await db.execute(
             """
             INSERT INTO incoming_mails (
@@ -1404,7 +1385,7 @@ async def insert_incoming_mail(
 async def set_incoming_mail_tg_message(
     incoming_id: int, user_id: int, *, chat_id: int, message_id: int
 ) -> None:
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with db_connect() as db:
         await db.execute(
             """
             UPDATE incoming_mails SET tg_chat_id = ?, tg_message_id = ?, notified = 1
@@ -1420,7 +1401,7 @@ async def get_incoming_thread_reply_message_id(
 ) -> int | None:
     """tg_message_id первого письма в цепочке (для reply_to)."""
     email = from_email.strip().lower()
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with db_connect() as db:
         cur = await db.execute(
             """
             SELECT tg_message_id FROM incoming_mails
@@ -1477,8 +1458,7 @@ async def get_gag_generated_link(
 
 
 async def get_incoming_mail(incoming_id: int, user_id: int) -> dict | None:
-    async with aiosqlite.connect(DB_PATH) as db:
-        db.row_factory = aiosqlite.Row
+    async with db_connect() as db:
         cur = await db.execute(
             "SELECT * FROM incoming_mails WHERE id = ? AND user_id = ?",
             (incoming_id, user_id),
@@ -1497,7 +1477,7 @@ async def save_incoming_gag_link(
 ) -> bool:
     """Сохранить ссылку после кнопки «Создать ссылку» (UI подключим позже)."""
     status = "ok" if url else "error"
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with db_connect() as db:
         cur = await db.execute(
             """
             UPDATE incoming_mails SET
@@ -1514,8 +1494,7 @@ async def save_incoming_gag_link(
 
 
 async def get_proxy(proxy_id: int, user_id: int) -> dict | None:
-    async with aiosqlite.connect(DB_PATH) as db:
-        db.row_factory = aiosqlite.Row
+    async with db_connect() as db:
         cur = await db.execute(
             "SELECT * FROM proxies WHERE id = ? AND user_id = ?",
             (proxy_id, user_id),
