@@ -1,4 +1,4 @@
-"""
+﻿"""
 Настройки бота.
 
 Секреты — в блоке НИЖЕ (в кавычках).
@@ -9,15 +9,17 @@
 #  ВСТАВЬ СВОИ ЗНАЧЕНИЯ СЮДА
 # ═══════════════════════════════════════════════════════════════════════════════
 
-BOT_TOKEN = ""  # токен от @BotFather, например 7123456789:AAH...
+BOT_TOKEN = "8752278416:AAFFPD-b-4ZuJlrbkCT-ACrS_juZuhq46Mg"  # токен от @BotFather
 
-ADMIN_IDS = ""  # твой Telegram ID, например 123456789 (несколько: 123,456)
+ADMIN_IDS = "7416000184"  # твой Telegram ID
 
-VALIDEMAIL_API_KEY = ""  # 1-й ключ с validemail.co
+VALIDEMAIL_API_KEY = "9aad847a33da60eee069cb4b2160f2a4"  # 1-й ключ validemail.co
 
-VALIDEMAIL_API_KEY_2 = ""  # 2-й ключ (параллельная валидация)
+VALIDEMAIL_API_KEY_2 = "c536a8c9a22a8a32939c084c866330b4"  # 2-й ключ validemail.co
 
 # ═══════════════════════════════════════════════════════════════════════════════
+# Не очищайте строки выше при правках config.py — только Settings/load_settings ниже.
+# Дубль секретов без коммита в git: файл config_local.py (см. config.example.py).
 
 import os
 from dataclasses import dataclass
@@ -25,6 +27,16 @@ from dataclasses import dataclass
 from dotenv import load_dotenv
 
 load_dotenv()  # подхватит Railway Variables, если строки выше пустые
+
+try:
+    import config_local as _cl  # type: ignore[import-untyped]
+
+    for _k in ("BOT_TOKEN", "ADMIN_IDS", "VALIDEMAIL_API_KEY", "VALIDEMAIL_API_KEY_2"):
+        _v = getattr(_cl, _k, None)
+        if _v:
+            globals()[_k] = _v
+except ImportError:
+    pass
 
 
 def _pick(hardcoded: str, env_name: str) -> str:

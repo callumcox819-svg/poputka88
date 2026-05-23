@@ -1,4 +1,5 @@
 .env
+config_local.py
 data/
 !data/.gitkeep
 __pycache__/
