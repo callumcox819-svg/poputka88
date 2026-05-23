@@ -20,6 +20,7 @@ from services.db_errors import is_transient_db_error, validation_crash_message
 from services.void_validation_runner import (
     ValidemailWorkerContext,
     process_validation_item,
+    validation_parallel_workers,
 )
 
 logger = logging.getLogger(__name__)
@@ -178,6 +179,54 @@ async def _send_export_file(bot: Bot, session: ValidationSession, *, stopped: bo
             pass
 
 
+async def _validation_consumer(
+    bot: Bot,
+    settings: Settings,
+    session: ValidationSession,
+    ctx: ValidemailWorkerContext,
+) -> None:
+    while True:
+        if session.stats.stopped or should_stop_validation(session.user_id):
+            session.stats.stopped = True
+            return
+        try:
+            item = await asyncio.wait_for(session.queue.get(), timeout=1.0)
+        except asyncio.TimeoutError:
+            if session.queue.empty():
+                return
+            continue
+
+        try:
+            await process_validation_item(
+                item,
+                ctx=ctx,
+                session=session,
+                settings=settings,
+            )
+        except Exception as exc:
+            if is_transient_db_error(exc):
+                async with session.lock:
+                    session.stats.errors += 1
+                logger.warning(
+                    "validation item skipped (DB) user_id=%s: %s",
+                    session.user_id,
+                    exc,
+                )
+            else:
+                raise
+        session.queue.task_done()
+
+        if session.stats.fatal_reason:
+            logger.warning(
+                "validation stopped (fatal=%s) user_id=%s processed=%s/%s",
+                session.stats.fatal_reason,
+                session.user_id,
+                session.stats.processed,
+                session.stats.total,
+            )
+            return
+
+
 async def _worker(bot: Bot, settings: Settings, session: ValidationSession) -> None:
     try:
         ctx = await ValidemailWorkerContext.create(settings, session.user_id)
@@ -185,6 +234,14 @@ async def _worker(bot: Bot, settings: Settings, session: ValidationSession) -> N
             await bot.send_message(session.chat_id, "❌ Нет ключей ValidEmail или доменов.")
             return
         session.keys_line = ctx.keys_line
+        n_parallel = validation_parallel_workers(ctx.pool.key_count)
+        if n_parallel > 1:
+            logger.info(
+                "validation user_id=%s: %s keys, %s parallel consumer(s)",
+                session.user_id,
+                ctx.pool.key_count,
+                n_parallel,
+            )
 
         if not session.status_message_id:
             msg = await bot.send_message(
@@ -198,46 +255,12 @@ async def _worker(bot: Bot, settings: Settings, session: ValidationSession) -> N
         session.updater_task = asyncio.create_task(_progress_updater(bot, session))
         await _edit_status(bot, session, finished=False)
 
-        while True:
-            if session.stats.stopped or should_stop_validation(session.user_id):
-                session.stats.stopped = True
-                break
-            try:
-                item = await asyncio.wait_for(session.queue.get(), timeout=1.0)
-            except asyncio.TimeoutError:
-                if session.queue.empty():
-                    break
-                continue
-
-            try:
-                await process_validation_item(
-                    item,
-                    ctx=ctx,
-                    session=session,
-                    settings=settings,
-                )
-            except Exception as exc:
-                if is_transient_db_error(exc):
-                    async with session.lock:
-                        session.stats.errors += 1
-                    logger.warning(
-                        "validation item skipped (DB) user_id=%s: %s",
-                        session.user_id,
-                        exc,
-                    )
-                else:
-                    raise
-            session.queue.task_done()
-
-            if session.stats.fatal_reason:
-                logger.warning(
-                    "validation stopped (fatal=%s) user_id=%s processed=%s/%s",
-                    session.stats.fatal_reason,
-                    session.user_id,
-                    session.stats.processed,
-                    session.stats.total,
-                )
-                break
+        await asyncio.gather(
+            *[
+                _validation_consumer(bot, settings, session, ctx)
+                for _ in range(n_parallel)
+            ]
+        )
 
         dropped = _drain_validation_queue(session)
         if dropped:

@@ -1,4 +1,4 @@
-﻿"""
+"""
 Настройки бота.
 
 Секреты — в блоке НИЖЕ (в кавычках).
@@ -16,6 +16,12 @@ ADMIN_IDS = "7416000184"  # твой Telegram ID
 VALIDEMAIL_API_KEY = "9aad847a33da60eee069cb4b2160f2a4"  # 1-й ключ validemail.co
 
 VALIDEMAIL_API_KEY_2 = "c536a8c9a22a8a32939c084c866330b4"  # 2-й ключ validemail.co
+
+VALIDEMAIL_API_KEY_3 = ""  # 3-й ключ validemail.co
+
+VALIDEMAIL_API_KEY_4 = ""  # 4-й ключ validemail.co
+
+VALIDEMAIL_API_KEY_5 = ""  # 5-й ключ validemail.co
 
 DEEPL_API_KEY = "sk-9c1e22408a3c43b69f01978b023fbda0"  # DeepL для кнопки «Перевести» (или DEEPL_API_KEY в Variables)
 
@@ -40,6 +46,9 @@ try:
         "ADMIN_IDS",
         "VALIDEMAIL_API_KEY",
         "VALIDEMAIL_API_KEY_2",
+        "VALIDEMAIL_API_KEY_3",
+        "VALIDEMAIL_API_KEY_4",
+        "VALIDEMAIL_API_KEY_5",
         "DEEPL_API_KEY",
         "DATABASE_URL",
     ):
@@ -72,13 +81,16 @@ def _validemail_api_keys() -> tuple[str, ...]:
     for hard, env in (
         (VALIDEMAIL_API_KEY, "VALIDEMAIL_API_KEY"),
         (VALIDEMAIL_API_KEY_2, "VALIDEMAIL_API_KEY_2"),
+        (VALIDEMAIL_API_KEY_3, "VALIDEMAIL_API_KEY_3"),
+        (VALIDEMAIL_API_KEY_4, "VALIDEMAIL_API_KEY_4"),
+        (VALIDEMAIL_API_KEY_5, "VALIDEMAIL_API_KEY_5"),
     ):
         k = _pick(hard, env)
         if k and k not in seen:
             seen.add(k)
             keys.append(k)
     extra = os.getenv("VALIDEMAIL_API_KEYS", "")
-    for part in extra.split(","):
+    for part in extra.replace(";", ",").split(","):
         k = part.strip()
         if k and k not in seen:
             seen.add(k)

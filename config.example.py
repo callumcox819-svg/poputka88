@@ -10,5 +10,8 @@
 # ADMIN_IDS = ""
 # VALIDEMAIL_API_KEY = ""
 # VALIDEMAIL_API_KEY_2 = ""
+# VALIDEMAIL_API_KEY_3 = ""
+# VALIDEMAIL_API_KEY_4 = ""
+# VALIDEMAIL_API_KEY_5 = ""
 # DATABASE_URL = ""  # postgresql://... на Railway
 # DEEPL_API_KEY = ""

@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import os
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
@@ -64,11 +65,24 @@ class ValidemailWorkerContext:
             )
         except ValueError:
             return None
+        parallel = validation_parallel_workers(pool.key_count)
         keys_line = (
             f"🔑 Ключей API: <b>{pool.key_count}</b> · "
-            f"до <b>{pool.key_count * per_key}</b> запросов"
+            f"потоков: <b>{parallel}</b> · "
+            f"до <b>{pool.key_count * per_key}</b> запросов/ключ"
         )
         return cls(pool=pool, domains=domains, per_key=per_key, keys_line=keys_line)
+
+
+def validation_parallel_workers(key_count: int) -> int:
+    """Сколько объявлений проверяем параллельно (≈ число ключей, как happy88)."""
+    n = int(key_count or 0)
+    if n <= 0:
+        return 1
+    raw = os.getenv("VALIDEMAIL_PARALLEL_WORKERS", "").strip()
+    if raw.isdigit():
+        return max(1, min(n, int(raw)))
+    return max(1, min(n, 5))
 
 
 def _enrich_export_item(item: dict[str, Any], email: str) -> dict[str, Any]:
