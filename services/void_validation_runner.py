@@ -161,7 +161,7 @@ async def run_void_validation(
         await bot.send_message(
             chat_id,
             "❌ Задайте <code>VALIDEMAIL_API_KEY</code> и "
-            "<code>VALIDEMAIL_API_KEY_2</code> в .env",
+            "<code>VALIDEMAIL_API_KEY_2</code> в <code>config.py</code> (вверху файла)",
             parse_mode="HTML",
         )
         return

@@ -17,6 +17,11 @@ logger = logging.getLogger(__name__)
 
 async def main() -> None:
     settings = load_settings()
+    logger.info(
+        "Config OK: admin_ids=%s, validemail_keys=%d",
+        len(settings.admin_ids),
+        len(settings.validemail_api_keys),
+    )
     await init_db()
 
     bot = Bot(token=settings.bot_token)

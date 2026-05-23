@@ -51,7 +51,7 @@ async def run_email_list_validation(
     if not api_keys:
         await bot.send_message(
             chat_id,
-            "❌ Задайте VALIDEMAIL_API_KEY и VALIDEMAIL_API_KEY_2 в .env",
+            "❌ Задайте VALIDEMAIL_API_KEY и VALIDEMAIL_API_KEY_2 в config.py",
             parse_mode="HTML",
         )
         return
