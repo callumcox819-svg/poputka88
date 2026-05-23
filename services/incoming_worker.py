@@ -135,8 +135,10 @@ async def _notify_incoming(
             logger.warning("send_photo failed mail_id=%s url=%s", mail_id, photo_url[:80])
 
 
-async def _process_account(bot: Bot, acc: dict) -> int:
-    """Опрос одного ящика. Возвращает число новых карточек в Telegram."""
+async def _process_account(
+    bot: Bot, acc: dict, *, catch_up_recent: int = 0
+) -> int:
+    """Опрос INBOX одного ящика. Возвращает число новых карточек в Telegram."""
     acc_id = int(acc["id"])
     user_id = int(acc["user_id"])
     host = (acc.get("imap_host") or "").strip()
@@ -155,6 +157,7 @@ async def _process_account(bot: Bot, acc: dict) -> int:
             email_addr=email_addr,
             password=password,
             last_uid=last_uid,
+            catch_up_recent=catch_up_recent,
         )
     except Exception as exc:
         logger.error("IMAP acc_id=%s %s: %s", acc_id, email_addr, exc)
@@ -169,14 +172,20 @@ async def _process_account(bot: Bot, acc: dict) -> int:
     inbox_label = (acc.get("sender_name") or "").strip()
     chat_id = user_id
     notified = 0
+    skipped_exists = 0
+    skipped_system = 0
+    skipped_empty = 0
 
     for row in mails:
         uid, from_email, from_name, subject, _date, body, message_id = row
         if not from_email:
+            skipped_empty += 1
             continue
         if is_google_system_mail(from_email, from_name, subject):
+            skipped_system += 1
             continue
         if await incoming_mail_exists(acc_id, uid):
+            skipped_exists += 1
             continue
 
         prior = await count_incoming_from_sender(acc_id, from_email)
@@ -224,24 +233,38 @@ async def _process_account(bot: Bot, acc: dict) -> int:
         except Exception:
             logger.exception("notify incoming mail_id=%s", mail_id)
 
+    if mails and not notified:
+        logger.info(
+            "IMAP acc=%s fetched=%s notified=0 (exists=%s system=%s empty=%s)",
+            email_addr,
+            len(mails),
+            skipped_exists,
+            skipped_system,
+            skipped_empty,
+        )
+
     return notified
 
 
-async def poll_incoming_for_user(bot: Bot, user_id: int) -> tuple[int, int]:
-    """Немедленный опрос IMAP только для ящиков user_id. (accounts, new_cards)."""
+async def poll_incoming_for_user(
+    bot: Bot, user_id: int, *, catch_up: bool = False
+) -> tuple[int, int]:
+    """Немедленный опрос INBOX для ящиков user_id. (accounts, new_cards)."""
     uid = int(user_id)
     accounts = [
         a for a in await list_imap_poll_accounts() if int(a.get("user_id") or 0) == uid
     ]
+    recent = 40 if catch_up else 0
     total = 0
     for acc in accounts:
-        total += await _process_account(bot, acc)
+        total += await _process_account(bot, acc, catch_up_recent=recent)
     if accounts:
         logger.info(
-            "IMAP manual poll user_id=%s: %s account(s), %s new card(s)",
+            "IMAP manual poll user_id=%s: %s account(s), %s new card(s), catch_up=%s",
             uid,
             len(accounts),
             total,
+            catch_up,
         )
     return len(accounts), total
 

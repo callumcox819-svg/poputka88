@@ -324,7 +324,7 @@ async def _run_test_batch(
     imap_extra = ""
     if ok_n > 0:
         try:
-            acc_n, mail_n = await poll_incoming_for_user(bot, user_id)
+            acc_n, mail_n = await poll_incoming_for_user(bot, user_id, catch_up=True)
             imap_extra = (
                 f"\n\n📬 <b>IMAP сейчас:</b> {acc_n} ящ., новых карточек: {mail_n}"
             )
