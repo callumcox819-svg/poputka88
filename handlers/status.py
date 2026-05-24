@@ -45,12 +45,12 @@ async def cmd_status(message: Message, settings: Settings) -> None:
         cid = int(active["id"])
         pending = await count_pending_recipients(cid)
         sent = int(active.get("sent") or 0)
-        total = int(active.get("total") or 0)
+        queue_total = sent + pending
         st = (active.get("status") or "").strip()
         icon = "▶️" if st == "running" else "⏸"
         lines.append(
             f"\n{icon} Рассылка <b>#{cid}</b> — {st}\n"
-            f"Отправлено: <b>{sent}</b> / {total}\n"
+            f"Отправлено: <b>{sent}</b> / {queue_total}\n"
             f"В очереди: <b>{pending}</b>\n"
             f"Ошибок: <b>{int(active.get('failed') or 0)}</b>"
         )

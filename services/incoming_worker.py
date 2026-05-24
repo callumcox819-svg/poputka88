@@ -22,6 +22,7 @@ from database import (
     set_imap_last_uid,
     inherit_incoming_gag_link,
     set_incoming_mail_tg_message,
+    update_incoming_mail_lead_snapshot,
 )
 from services.imap_fetch import (
     fetch_new_mails_sync,
@@ -71,10 +72,20 @@ async def _lead_link(lead: dict) -> str:
 
 
 async def _lead_meta(
-    user_id: int, from_email: str, body: str, *, subject: str = ""
+    user_id: int,
+    from_email: str,
+    body: str,
+    *,
+    subject: str = "",
+    account_id: int = 0,
+    from_name: str = "",
 ) -> dict:
     resolved = await resolve_validated_lead(
-        user_id, contact_email=from_email, subject=subject
+        user_id,
+        contact_email=from_email,
+        subject=subject,
+        account_id=account_id or None,
+        from_name=from_name,
     )
     if not resolved:
         svc = service_label_from_body(body)
@@ -101,6 +112,22 @@ async def _lead_meta(
     }
 
 
+async def _sync_incoming_lead_snapshot(
+    user_id: int, mail_id: int, meta: dict
+) -> None:
+    if not mail_id or not meta.get("lead_id"):
+        return
+    await update_incoming_mail_lead_snapshot(
+        mail_id,
+        user_id,
+        lead_id=int(meta["lead_id"]),
+        product_title=meta.get("product_title", ""),
+        service_label=meta.get("service_label", ""),
+        photo_url=meta.get("photo_url", ""),
+        offer_price=meta.get("offer_price", ""),
+    )
+
+
 async def _notify_incoming(
     bot: Bot,
     *,
@@ -117,6 +144,27 @@ async def _notify_incoming(
     mail = await get_incoming_mail(mail_id, user_id)
     if not mail:
         return
+
+    if meta.get("lead_id") and not (mail.get("product_title") or "").strip():
+        await _sync_incoming_lead_snapshot(user_id, mail_id, meta)
+        mail = await get_incoming_mail(mail_id, user_id) or mail
+    elif not meta.get("lead_id") and mail.get("lead_id"):
+        from database import get_validated_lead_by_id
+
+        lead = await get_validated_lead_by_id(user_id, int(mail["lead_id"]))
+        if lead:
+            link = await _lead_link(lead)
+            meta = {
+                "lead_id": int(lead["id"]),
+                "product_title": (lead.get("item_title") or "").strip(),
+                "service_label": service_label_from_link(link)
+                or (mail.get("service_label") or ""),
+                "photo_url": (lead.get("item_photo") or "").strip(),
+                "offer_price": _format_price(
+                    str(lead.get("item_price") or ""),
+                    str(lead.get("item_currency") or lead.get("currency") or ""),
+                ),
+            }
 
     reply_to = await get_incoming_thread_reply_message_id(
         account_id, mail.get("from_email") or ""
@@ -231,7 +279,14 @@ async def _process_account(
             continue
 
         is_first = (await count_incoming_from_sender(acc_id, from_email)) == 0
-        meta = await _lead_meta(user_id, from_email, body, subject=subject)
+        meta = await _lead_meta(
+            user_id,
+            from_email,
+            body,
+            subject=subject,
+            account_id=acc_id,
+            from_name=from_name,
+        )
 
         mail_id = await get_incoming_mail_id_by_uid(acc_id, uid) or 0
         if mail_id:
@@ -239,6 +294,7 @@ async def _process_account(
             if existing and existing.get("tg_message_id"):
                 skipped_exists += 1
                 continue
+            await _sync_incoming_lead_snapshot(user_id, mail_id, meta)
         else:
             mail_id = await insert_incoming_mail(
                 user_id,
@@ -260,6 +316,14 @@ async def _process_account(
                 mail_id = await get_incoming_mail_id_by_uid(acc_id, uid) or 0
             if not mail_id:
                 continue
+
+        if not meta.get("lead_id"):
+            logger.info(
+                "IMAP no lead match user_id=%s from=%s subj=%r",
+                user_id,
+                from_email,
+                (subject or "")[:80],
+            )
 
         await inherit_incoming_gag_link(mail_id, user_id, from_email)
 

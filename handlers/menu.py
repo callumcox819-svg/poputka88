@@ -61,12 +61,13 @@ async def cmd_reset(message: Message) -> None:
     stopped = int(result.get("stopped_running") or 0)
     lines = [
         "🔄 <b>Очередь рассылки обнулена</b>",
-        f"Убрано из очереди: <b>{removed}</b> адресов (status pending).",
+        f"Убрано из очереди: <b>{removed}</b> адресов (pending).",
         "📧 <b>Валидированные лиды в БД</b> — без изменений.",
-        "✉️ Уже <b>отправленные</b> в прошлых кампаниях — в истории, повторно /send на них не пойдёт.",
+        "✉️ Уже <b>отправленные</b> (sent) — в истории; /send снова на них не пойдёт.",
+        "📊 /stat — счётчик очереди должен быть <b>0 / 0</b>.",
     ]
     if stopped:
-        lines.insert(1, "⏹ Активная рассылка остановлена.")
+        lines.insert(1, f"⏹ Остановлено рассылок: <b>{stopped}</b>.")
     if removed == 0 and stopped == 0:
         lines = [
             "🔄 <b>Очередь рассылки пуста</b>",

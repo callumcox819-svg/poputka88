@@ -443,41 +443,83 @@ async def reset_user_mailing_queue(user_id: int) -> dict[str, int]:
     Обнулить очередь рассылки: удалить все pending-получатели.
     validated_leads и уже отправленные (status=sent) не трогаем.
     """
+    stopped_running = await pause_running_campaigns(user_id)
+    removed = 0
     async with db_connect() as db:
         cur = await db.execute(
-            "SELECT id FROM campaigns WHERE user_id = ? AND status = 'running'",
+            "SELECT id FROM campaigns WHERE user_id = ?",
             (user_id,),
         )
-        running_ids = [int(r[0]) for r in await cur.fetchall()]
-        if running_ids:
+        campaign_ids = [int(r[0]) for r in await cur.fetchall()]
+        for cid in campaign_ids:
+            del_cur = await db.execute(
+                """
+                DELETE FROM recipients
+                WHERE campaign_id = ? AND status = 'pending'
+                """,
+                (cid,),
+            )
+            removed += int(del_cur.rowcount or 0)
             await db.execute(
                 """
-                UPDATE campaigns SET status = 'paused'
-                WHERE user_id = ? AND status = 'running'
+                UPDATE campaigns
+                SET total = (
+                    SELECT COUNT(*) FROM recipients WHERE campaign_id = ?
+                )
+                WHERE id = ?
                 """,
-                (user_id,),
+                (cid, cid),
             )
+        await db.commit()
+    return {"removed": removed, "stopped_running": len(stopped_running)}
+
+
+async def find_lead_by_seller_display_name(
+    user_id: int, from_name: str
+) -> dict | None:
+    """Лид по имени в From (если email в ответе другой)."""
+    from services.lead_keys import seller_match_key
+
+    sk = seller_match_key(from_name or "")
+    if len(sk) < 4:
+        return None
+    async with db_connect() as db:
         cur = await db.execute(
             """
-            DELETE FROM recipients
-            WHERE status = 'pending'
-              AND campaign_id IN (SELECT id FROM campaigns WHERE user_id = ?)
+            SELECT * FROM validated_leads
+            WHERE user_id = ? AND seller_key = ?
+            ORDER BY id DESC
+            LIMIT 2
             """,
-            (user_id,),
+            (user_id, sk),
         )
-        removed = int(cur.rowcount or 0)
-        await db.execute(
+        rows = [r.as_dict() for r in await cur.fetchall()]
+    if len(rows) == 1:
+        return rows[0]
+    return None
+
+
+async def find_lead_from_incoming_thread(
+    user_id: int, account_id: int, from_email: str
+) -> dict | None:
+    """Лид с прошлого письма этого продавца на том же ящике."""
+    em = (from_email or "").strip().lower()
+    if not em or not account_id:
+        return None
+    async with db_connect() as db:
+        cur = await db.execute(
             """
-            UPDATE campaigns
-            SET total = (
-                SELECT COUNT(*) FROM recipients r WHERE r.campaign_id = campaigns.id
-            )
-            WHERE user_id = ?
+            SELECT vl.* FROM incoming_mails im
+            INNER JOIN validated_leads vl ON vl.id = im.lead_id
+            WHERE im.user_id = ? AND im.account_id = ? AND im.from_email = ?
+              AND im.lead_id IS NOT NULL
+            ORDER BY im.id DESC
+            LIMIT 1
             """,
-            (user_id,),
+            (user_id, int(account_id), em),
         )
-        await db.commit()
-    return {"removed": removed, "stopped_running": len(running_ids)}
+        row = await cur.fetchone()
+        return row.as_dict() if row else None
 
 
 async def upsert_smtp_account(
@@ -620,7 +662,7 @@ async def get_active_mailing_campaign(user_id: int) -> dict | None:
     running = await get_running_campaign(user_id)
     if running:
         pending = await count_pending_recipients(int(running["id"]))
-        if pending > 0 or (running.get("status") or "") == "running":
+        if pending > 0:
             return running
     paused = await get_latest_paused_campaign(user_id)
     if paused:

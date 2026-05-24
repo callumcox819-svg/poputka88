@@ -11,8 +11,11 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from database import (
+    find_lead_by_email_norm,
     find_lead_by_incoming_subject,
     find_lead_by_recent_mailing,
+    find_lead_by_seller_display_name,
+    find_lead_from_incoming_thread,
     get_lead_for_mailing_recipient,
     get_validated_lead_by_email,
     get_validated_lead_by_id,
@@ -34,6 +37,8 @@ async def resolve_validated_lead(
     contact_email: str = "",
     campaign_id: int | None = None,
     subject: str = "",
+    account_id: int | None = None,
+    from_name: str = "",
 ) -> LeadResolveResult | None:
     uid = int(user_id)
 
@@ -56,9 +61,17 @@ async def resolve_validated_lead(
     if lead:
         return LeadResolveResult(lead=lead, matched_by="email")
 
+    lead = await find_lead_by_email_norm(uid, email)
+    if lead:
+        return LeadResolveResult(lead=lead, matched_by="email_norm")
+
     lead = await get_validated_lead_by_reply_email(uid, email)
     if lead:
         return LeadResolveResult(lead=lead, matched_by="email_fuzzy")
+
+    lead = await find_lead_by_seller_display_name(uid, from_name)
+    if lead:
+        return LeadResolveResult(lead=lead, matched_by="seller_name")
 
     lead = await find_lead_by_recent_mailing(
         uid, contact_email=email, subject=subject
@@ -70,6 +83,11 @@ async def resolve_validated_lead(
         lead = await find_lead_by_incoming_subject(uid, subject)
         if lead:
             return LeadResolveResult(lead=lead, matched_by="subject")
+
+    if account_id:
+        lead = await find_lead_from_incoming_thread(uid, int(account_id), email)
+        if lead:
+            return LeadResolveResult(lead=lead, matched_by="incoming_thread")
 
     lead = await resolve_lead_for_test_reply(
         uid, contact_email=email, subject=subject
