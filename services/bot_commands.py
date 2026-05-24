@@ -17,6 +17,7 @@ BOT_COMMANDS: list[BotCommand] = [
     BotCommand(command="stopcheck", description="Остановить проверку JSON"),
     BotCommand(command="imap_check", description="Проверка входящих IMAP"),
     BotCommand(command="stat", description="Статус рассылки"),
+    BotCommand(command="reset", description="Очистить очередь рассылки"),
 ]
 
 
@@ -51,4 +52,5 @@ send - Запустить рассылку
 stop - Остановить рассылку
 stopcheck - Остановить проверку JSON
 imap_check - Проверка входящих IMAP
-stat - Статус рассылки"""
+stat - Статус рассылки
+reset - Очистить очередь рассылки"""

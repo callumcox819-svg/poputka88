@@ -4,7 +4,7 @@ from aiogram.fsm.context import FSMContext
 from aiogram.types import Message
 
 from config import Settings
-from database import get_running_campaign
+from database import get_running_campaign, reset_user_mailing_queue
 from services.mailing_start import start_mailing_from_validated_db
 from handlers.settings import match_settings_menu_text, open_settings_menu
 from keyboards.main_menu import BTN_START_MAIL, BTN_STOP_MAIL, main_keyboard
@@ -50,6 +50,30 @@ async def cmd_stopcheck(message: Message) -> None:
         )
     else:
         await message.answer("Проверка не запущена.", reply_markup=main_keyboard())
+
+
+@router.message(Command("reset"))
+async def cmd_reset(message: Message) -> None:
+    uid = message.from_user.id
+    await stop_user_mailings(uid)
+    result = await reset_user_mailing_queue(uid)
+    removed = int(result.get("removed") or 0)
+    stopped = int(result.get("stopped_running") or 0)
+    lines = [
+        "🔄 <b>Очередь рассылки обнулена</b>",
+        f"Убрано из очереди: <b>{removed}</b> адресов (status pending).",
+        "📧 <b>Валидированные лиды в БД</b> — без изменений.",
+        "✉️ Уже <b>отправленные</b> в прошлых кампаниях — в истории, повторно /send на них не пойдёт.",
+    ]
+    if stopped:
+        lines.insert(1, "⏹ Активная рассылка остановлена.")
+    if removed == 0 and stopped == 0:
+        lines = [
+            "🔄 <b>Очередь рассылки пуста</b>",
+            "Нет адресов со статусом pending — сбрасывать нечего.",
+            "📧 Лиды в БД на месте. /send — собрать новую очередь из БД.",
+        ]
+    await message.answer("\n".join(lines), parse_mode="HTML", reply_markup=main_keyboard())
 
 
 @router.message(Command("send"))

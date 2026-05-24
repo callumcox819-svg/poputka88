@@ -438,6 +438,48 @@ async def pause_running_campaigns(user_id: int) -> list[int]:
         return ids
 
 
+async def reset_user_mailing_queue(user_id: int) -> dict[str, int]:
+    """
+    Обнулить очередь рассылки: удалить все pending-получатели.
+    validated_leads и уже отправленные (status=sent) не трогаем.
+    """
+    async with db_connect() as db:
+        cur = await db.execute(
+            "SELECT id FROM campaigns WHERE user_id = ? AND status = 'running'",
+            (user_id,),
+        )
+        running_ids = [int(r[0]) for r in await cur.fetchall()]
+        if running_ids:
+            await db.execute(
+                """
+                UPDATE campaigns SET status = 'paused'
+                WHERE user_id = ? AND status = 'running'
+                """,
+                (user_id,),
+            )
+        cur = await db.execute(
+            """
+            DELETE FROM recipients
+            WHERE status = 'pending'
+              AND campaign_id IN (SELECT id FROM campaigns WHERE user_id = ?)
+            """,
+            (user_id,),
+        )
+        removed = int(cur.rowcount or 0)
+        await db.execute(
+            """
+            UPDATE campaigns
+            SET total = (
+                SELECT COUNT(*) FROM recipients r WHERE r.campaign_id = campaigns.id
+            )
+            WHERE user_id = ?
+            """,
+            (user_id,),
+        )
+        await db.commit()
+    return {"removed": removed, "stopped_running": len(running_ids)}
+
+
 async def upsert_smtp_account(
     user_id: int,
     *,
