@@ -148,9 +148,15 @@ def build_card_from_mail_row(
     *,
     inbox_label: str | None = None,
     translation: str | None = None,
+    include_product_extras: bool = True,
 ) -> tuple[str, InlineKeyboardMarkup]:
     gen = (mail.get("generated_link") or "").strip()
     link_id = link_id_from_generated_url(gen) if gen else None
+    title = (mail.get("product_title") or "").strip() or None
+    price = (mail.get("offer_price") or "").strip() or None
+    if not include_product_extras:
+        title = None
+        price = None
     text = render_mail_text(
         account_email=(mail.get("account_email") or "").strip(),
         inbox_label=inbox_label,
@@ -160,8 +166,8 @@ def build_card_from_mail_row(
         body=(mail.get("body") or "").strip(),
         link_id=link_id,
         service_label=(mail.get("service_label") or "").strip() or None,
-        product_title=(mail.get("product_title") or "").strip() or None,
-        offer_price=(mail.get("offer_price") or "").strip() or None,
+        product_title=title,
+        offer_price=price,
         translation=translation,
     )
     kb = build_incoming_kb(

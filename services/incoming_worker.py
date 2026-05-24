@@ -11,6 +11,7 @@ from aiogram.exceptions import TelegramBadRequest
 
 from database import (
     count_incoming_from_sender,
+    incoming_is_first_from_sender,
     get_imap_last_uid,
     get_incoming_mail,
     get_incoming_mail_id_by_uid,
@@ -120,7 +121,11 @@ async def _notify_incoming(
     reply_to = await get_incoming_thread_reply_message_id(
         account_id, mail.get("from_email") or ""
     )
-    text, kb = build_card_from_mail_row(mail, inbox_label=inbox_label or None)
+    text, kb = build_card_from_mail_row(
+        mail,
+        inbox_label=inbox_label or None,
+        include_product_extras=is_first_from_sender,
+    )
     try:
         msg = await bot.send_message(
             chat_id=chat_id,
@@ -148,26 +153,27 @@ async def _notify_incoming(
     except Exception:
         pass
 
-    photo_url = (meta.get("photo_url") or "").strip()
-    if photo_url:
-        title = (meta.get("product_title") or "").strip()
-        cap = "📷 Фото товара"
-        if is_first_from_sender:
-            cap = "📷 Фото товара (первый ответ)"
-        if title:
-            cap = f"📌 {title}\n{cap}"
-        price = (meta.get("offer_price") or "").strip()
-        if price:
-            cap += f"\n💰 Цена: {price} 💰"
-        try:
-            await bot.send_photo(
-                chat_id=chat_id,
-                photo=photo_url,
-                caption=cap,
-                reply_to_message_id=msg.message_id,
-            )
-        except Exception:
-            logger.warning("send_photo failed mail_id=%s url=%s", mail_id, photo_url[:80])
+    if is_first_from_sender:
+        photo_url = (meta.get("photo_url") or "").strip()
+        if photo_url:
+            title = (meta.get("product_title") or "").strip()
+            cap = "📷 Фото товара"
+            if title:
+                cap = f"📌 {title}\n{cap}"
+            price = (meta.get("offer_price") or "").strip()
+            if price:
+                cap += f"\n💰 Цена: {price} 💰"
+            try:
+                await bot.send_photo(
+                    chat_id=chat_id,
+                    photo=photo_url,
+                    caption=cap,
+                    reply_to_message_id=msg.message_id,
+                )
+            except Exception:
+                logger.warning(
+                    "send_photo failed mail_id=%s url=%s", mail_id, photo_url[:80]
+                )
 
 
 async def _process_account(
@@ -224,8 +230,7 @@ async def _process_account(
             skipped_system += 1
             continue
 
-        prior = await count_incoming_from_sender(acc_id, from_email)
-        is_first = prior == 0
+        is_first = (await count_incoming_from_sender(acc_id, from_email)) == 0
         meta = await _lead_meta(user_id, from_email, body, subject=subject)
 
         mail_id = await get_incoming_mail_id_by_uid(acc_id, uid) or 0
@@ -334,8 +339,9 @@ async def _flush_pending_notifications(bot: Bot) -> int:
         acc_id = int(row["account_id"])
         mail_id = int(row["id"])
         from_email = (row.get("from_email") or "").strip()
-        prior = await count_incoming_from_sender(acc_id, from_email)
-        is_first = prior <= 1
+        is_first = await incoming_is_first_from_sender(
+            int(row["account_id"]), from_email, int(mail_id)
+        )
         meta = {
             "lead_id": row.get("lead_id"),
             "product_title": row.get("product_title") or "",

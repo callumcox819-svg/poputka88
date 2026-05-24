@@ -1684,6 +1684,25 @@ async def incoming_mail_exists(account_id: int, imap_uid: str) -> bool:
         return await cur.fetchone() is not None
 
 
+async def incoming_is_first_from_sender(
+    account_id: int, from_email: str, mail_id: int
+) -> bool:
+    """Первое входящее от продавца на этом ящике (нет более ранних писем с тем же From)."""
+    email = (from_email or "").strip().lower()
+    if not email or not mail_id:
+        return True
+    async with db_connect() as db:
+        cur = await db.execute(
+            """
+            SELECT 1 FROM incoming_mails
+            WHERE account_id = ? AND from_email = ? AND id < ?
+            LIMIT 1
+            """,
+            (int(account_id), email, int(mail_id)),
+        )
+        return await cur.fetchone() is None
+
+
 async def count_incoming_from_sender(account_id: int, from_email: str) -> int:
     email = from_email.strip().lower()
     async with db_connect() as db:
