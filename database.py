@@ -498,6 +498,22 @@ async def clear_mailing_reset_since(user_id: int) -> None:
     await set_user_blob(user_id, MAILING_RESET_SINCE_BLOB, None)
 
 
+def _mailing_since_query_param(since: str) -> str | object:
+    """SQLite: строка; PostgreSQL: datetime (asyncpg не принимает str для timestamptz)."""
+    if not is_postgres():
+        return since
+    from datetime import datetime, timezone
+
+    s = since.strip().replace("Z", "+00:00")
+    try:
+        dt = datetime.fromisoformat(s) if "T" in s else datetime.strptime(s, "%Y-%m-%d %H:%M:%S")
+    except ValueError:
+        return since
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    return dt
+
+
 async def find_lead_by_seller_display_name(
     user_id: int, from_name: str
 ) -> dict | None:
@@ -1334,6 +1350,7 @@ async def list_validated_emails_pending_mailing(
     since = (since_created_at or "").strip()
     async with db_connect() as db:
         if since:
+            since_param = _mailing_since_query_param(since)
             cur = await db.execute(
                 """
                 SELECT vl.email FROM validated_leads vl
@@ -1349,7 +1366,7 @@ async def list_validated_emails_pending_mailing(
                 ORDER BY vl.id DESC
                 LIMIT ?
                 """,
-                (user_id, since, limit),
+                (user_id, since_param, limit),
             )
         else:
             cur = await db.execute(
