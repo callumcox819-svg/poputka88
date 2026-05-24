@@ -2054,10 +2054,13 @@ async def inherit_incoming_gag_link(
             (user_id, em, int(incoming_id)),
         )
         row = await cur.fetchone()
-        if not row or not row[0]:
+        if not row:
             return False
-        link = str(row[0]).strip()
-        ad_id = str(row[1] or "").strip() if len(row) > 1 else ""
+        prev = row.as_dict() if hasattr(row, "as_dict") else {}
+        link = str(prev.get("generated_link") or row[0] or "").strip()
+        if not link:
+            return False
+        ad_id = str(prev.get("gag_ad_id") or "").strip()
         cur2 = await db.execute(
             """
             UPDATE incoming_mails SET

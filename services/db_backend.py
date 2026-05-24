@@ -147,6 +147,9 @@ class _Row:
     def as_dict(self) -> dict[str, Any]:
         return {c: v for c, v in zip(self._cols, self._vals)}
 
+    def __len__(self) -> int:
+        return len(self._vals)
+
 
 class _Cursor:
     def __init__(self, rows: list[_Row], *, lastrowid: int | None, rowcount: int):

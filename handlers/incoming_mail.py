@@ -125,7 +125,7 @@ def _kb_html_pick(mail_id: int) -> InlineKeyboardMarkup:
             ],
             [
                 InlineKeyboardButton(
-                    text="🚫 Отмена", callback_data=f"mail_reply_mode:cancel:{mail_id}"
+                    text="🚫 Отмена", callback_data=f"mail_reply_mode:back:{mail_id}"
                 )
             ],
         ]
@@ -299,23 +299,6 @@ async def cb_mail_reply_html(callback: CallbackQuery, settings: Settings, state:
         mail_id = int(mail_id_s)
     except Exception:
         return await callback.answer("Неверные данные", show_alert=True)
-
-    if kind == "back":
-        uid = callback.from_user.id
-        await state.set_state(MailReply.waiting_choice)
-        try:
-            await callback.message.edit_text(
-                REPLY_CHOICE_TEXT,
-                parse_mode="HTML",
-                reply_markup=_kb_reply_choice(mail_id),
-            )
-        except Exception:
-            await callback.message.answer(
-                REPLY_CHOICE_TEXT,
-                parse_mode="HTML",
-                reply_markup=_kb_reply_choice(mail_id),
-            )
-        return await callback.answer()
 
     uid = callback.from_user.id
     mail = await get_incoming_mail(mail_id, uid)
