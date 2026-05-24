@@ -601,6 +601,35 @@ async def get_last_campaign(user_id: int) -> dict | None:
         return row.as_dict() if row else None
 
 
+async def count_total_sent_mails(user_id: int) -> int:
+    """Сумма успешно отправленных писем по всем кампаниям."""
+    async with db_connect() as db:
+        cur = await db.execute(
+            "SELECT COALESCE(SUM(sent), 0) FROM campaigns WHERE user_id = ?",
+            (user_id,),
+        )
+        row = await cur.fetchone()
+        return int(row[0]) if row else 0
+
+
+async def get_active_mailing_campaign(user_id: int) -> dict | None:
+    """
+    Кампания с непустой очередью: running или paused с pending > 0.
+    Завершённые (done) без pending — не активны (счётчик в /stat = 0).
+    """
+    running = await get_running_campaign(user_id)
+    if running:
+        pending = await count_pending_recipients(int(running["id"]))
+        if pending > 0 or (running.get("status") or "") == "running":
+            return running
+    paused = await get_latest_paused_campaign(user_id)
+    if paused:
+        pending = await count_pending_recipients(int(paused["id"]))
+        if pending > 0:
+            return paused
+    return None
+
+
 def _smtp_account_cols(*, with_secrets: bool) -> str:
     base = (
         "id, sender_name, email, smtp_host, smtp_port, imap_host, imap_port, "
