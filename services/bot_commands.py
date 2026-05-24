@@ -12,7 +12,8 @@ logger = logging.getLogger(__name__)
 
 BOT_COMMANDS: list[BotCommand] = [
     BotCommand(command="start", description="Запуск бота и меню"),
-    BotCommand(command="send", description="Запустить рассылку"),
+    BotCommand(command="send", description="Рассылка (после /reset — только новые)"),
+    BotCommand(command="sendall", description="Рассылка по всей БД"),
     BotCommand(command="stop", description="Остановить рассылку"),
     BotCommand(command="stopcheck", description="Остановить проверку JSON"),
     BotCommand(command="imap_check", description="Проверка входящих IMAP"),
@@ -48,7 +49,8 @@ async def register_bot_commands(bot: Bot, *, chat_id: int | None = None) -> None
 
 # Текст для ручной вставки в @BotFather → /setcommands
 BOTFATHER_COMMANDS_TEXT = """start - Запуск бота и меню
-send - Запустить рассылку
+send - Рассылка (после /reset — только новые)
+sendall - Рассылка по всей БД
 stop - Остановить рассылку
 stopcheck - Остановить проверку JSON
 imap_check - Проверка входящих IMAP

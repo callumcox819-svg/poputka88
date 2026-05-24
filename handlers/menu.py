@@ -64,6 +64,8 @@ async def cmd_reset(message: Message) -> None:
         f"Убрано из очереди: <b>{removed}</b> адресов (pending).",
         "📧 <b>Валидированные лиды в БД</b> — без изменений.",
         "✉️ Уже <b>отправленные</b> (sent) — в истории; /send снова на них не пойдёт.",
+        "📨 Следующий <code>/send</code> — <b>только</b> лиды из подбора после сброса.",
+        "📨 Вся база (как раньше): <code>/sendall</code>.",
         "📊 /stat — счётчик очереди должен быть <b>0 / 0</b>.",
     ]
     if stopped:
@@ -82,6 +84,13 @@ async def cmd_send(message: Message, state: FSMContext, settings: Settings, bot)
     await start_mailing_from_validated_db(message, state, settings, bot)
 
 
+@router.message(Command("sendall"))
+async def cmd_sendall(message: Message, state: FSMContext, settings: Settings, bot) -> None:
+    await start_mailing_from_validated_db(
+        message, state, settings, bot, full_database=True
+    )
+
+
 @router.message(Command("imap_check", "imap_diag"))
 async def cmd_imap_check(message: Message, bot) -> None:
     from handlers.settings import run_imap_check
@@ -96,7 +105,12 @@ async def btn_stop_mail(message: Message) -> None:
 
 @router.message(F.text == BTN_START_MAIL)
 async def btn_start_mail(message: Message, state: FSMContext, settings: Settings, bot) -> None:
-    await cmd_send(message, state, settings, bot)
+    from database import get_mailing_reset_since
+
+    if await get_mailing_reset_since(message.from_user.id):
+        await cmd_send(message, state, settings, bot)
+    else:
+        await cmd_sendall(message, state, settings, bot)
 
 
 @router.message(F.func(lambda m: match_settings_menu_text(getattr(m, "text", None))))

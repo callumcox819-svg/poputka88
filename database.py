@@ -471,7 +471,31 @@ async def reset_user_mailing_queue(user_id: int) -> dict[str, int]:
                 (cid, cid),
             )
         await db.commit()
+    await mark_mailing_queue_reset(user_id)
     return {"removed": removed, "stopped_running": len(stopped_running)}
+
+
+MAILING_RESET_SINCE_BLOB = "mailing_reset_since"
+
+
+async def mark_mailing_queue_reset(user_id: int) -> None:
+    """После /reset следующий /send берёт только лиды, добавленные в БД после сброса."""
+    from datetime import datetime, timezone
+
+    ts = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
+    await set_user_blob(user_id, MAILING_RESET_SINCE_BLOB, ts)
+
+
+async def get_mailing_reset_since(user_id: int) -> str | None:
+    raw = await get_user_blob(user_id, MAILING_RESET_SINCE_BLOB)
+    if raw is None:
+        return None
+    s = str(raw).strip()
+    return s or None
+
+
+async def clear_mailing_reset_since(user_id: int) -> None:
+    await set_user_blob(user_id, MAILING_RESET_SINCE_BLOB, None)
 
 
 async def find_lead_by_seller_display_name(
@@ -1301,26 +1325,49 @@ async def count_already_sent_mailing_emails(user_id: int) -> int:
 
 
 async def list_validated_emails_pending_mailing(
-    user_id: int, *, limit: int = 10000
+    user_id: int,
+    *,
+    limit: int = 10000,
+    since_created_at: str | None = None,
 ) -> list[str]:
     """Email из validated_leads, которым ещё не слали (ни в одной кампании)."""
+    since = (since_created_at or "").strip()
     async with db_connect() as db:
-        cur = await db.execute(
-            """
-            SELECT vl.email FROM validated_leads vl
-            WHERE vl.user_id = ?
-              AND NOT EXISTS (
-                SELECT 1 FROM recipients r
-                JOIN campaigns c ON c.id = r.campaign_id
-                WHERE c.user_id = vl.user_id
-                  AND lower(r.email) = lower(vl.email)
-                  AND r.status = 'sent'
-              )
-            ORDER BY vl.id DESC
-            LIMIT ?
-            """,
-            (user_id, limit),
-        )
+        if since:
+            cur = await db.execute(
+                """
+                SELECT vl.email FROM validated_leads vl
+                WHERE vl.user_id = ?
+                  AND vl.created_at >= ?
+                  AND NOT EXISTS (
+                    SELECT 1 FROM recipients r
+                    JOIN campaigns c ON c.id = r.campaign_id
+                    WHERE c.user_id = vl.user_id
+                      AND lower(r.email) = lower(vl.email)
+                      AND r.status = 'sent'
+                  )
+                ORDER BY vl.id DESC
+                LIMIT ?
+                """,
+                (user_id, since, limit),
+            )
+        else:
+            cur = await db.execute(
+                """
+                SELECT vl.email FROM validated_leads vl
+                WHERE vl.user_id = ?
+                  AND NOT EXISTS (
+                    SELECT 1 FROM recipients r
+                    JOIN campaigns c ON c.id = r.campaign_id
+                    WHERE c.user_id = vl.user_id
+                      AND lower(r.email) = lower(vl.email)
+                      AND r.status = 'sent'
+                  )
+                ORDER BY vl.id DESC
+                LIMIT ?
+                """,
+                (user_id, limit),
+            )
         return [str(r[0]) for r in await cur.fetchall()]
 
 
