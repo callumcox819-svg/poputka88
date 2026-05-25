@@ -28,6 +28,7 @@ from services.gag_link_card import (
 from services.gag_user import GagNotConfiguredError, load_gag_profile
 from services.html_incoming_send import send_incoming_html
 from services.incoming_reply_send import send_incoming_text_reply
+from services.outbound_lang import seller_outbound_text_error
 from services.presets import TemplateItem, load_templates
 from services.reply_notify import (
     ReplyNotifyCtx,
@@ -42,9 +43,10 @@ logger = logging.getLogger(__name__)
 router = Router()
 
 REPLY_CHOICE_TEXT = (
-    "Что отправить?\n\n"
+    "Введите текст сообщением (DE/EN) или выберите пресет / HTML.\n\n"
     "<i>HTML: прокси + GAG-ссылка. Имя (From) и тема — строго из "
-    "⚙️ → 👤 Имя для спуфинга (не из входящего письма).</i>"
+    "⚙️ → 👤 Имя для спуфинга (не из входящего письма).</i>\n"
+    "<i>На русском продавцам писать нельзя.</i>"
 )
 
 
@@ -60,12 +62,6 @@ def _kb_reply_choice(mail_id: int) -> InlineKeyboardMarkup:
                     text="🧩 Отправить HTML",
                     callback_data=f"mail_reply_mode:html:{mail_id}",
                 ),
-            ],
-            [
-                InlineKeyboardButton(
-                    text="✏️ Ручной ввод",
-                    callback_data=f"mail_reply_mode:manual:{mail_id}",
-                )
             ],
             [
                 InlineKeyboardButton(
@@ -160,7 +156,7 @@ async def cb_mail_reply(callback: CallbackQuery, state: FSMContext) -> None:
         return await callback.answer("Письмо не найдено", show_alert=True)
 
     anchor = mail.get("tg_message_id") or callback.message.message_id
-    await state.set_state(MailReply.waiting_choice)
+    await state.set_state(MailReply.waiting_text)
     ui = await callback.message.answer(
         REPLY_CHOICE_TEXT,
         parse_mode="HTML",
@@ -196,7 +192,7 @@ async def cb_mail_reply_mode(callback: CallbackQuery, state: FSMContext) -> None
         return await callback.answer("Отменено")
 
     if mode == "back":
-        await state.set_state(MailReply.waiting_choice)
+        await state.set_state(MailReply.waiting_text)
         try:
             await callback.message.edit_text(
                 REPLY_CHOICE_TEXT,
@@ -229,24 +225,6 @@ async def cb_mail_reply_mode(callback: CallbackQuery, state: FSMContext) -> None
                 "🧾 <b>Ваши шаблоны</b>\n\nНажмите пресет для отправки:",
                 parse_mode="HTML",
                 reply_markup=_kb_preset_pick(items, mail_id),
-            )
-            await state.update_data(ui_message_id=ui.message_id)
-        return await callback.answer()
-
-    if mode == "manual":
-        await state.set_state(MailReply.waiting_text)
-        await state.update_data(mail_id=mail_id)
-        try:
-            await callback.message.edit_text(
-                "✏️ <b>Ручной ответ</b>\n\nВведите текст следующим сообщением.\n"
-                "«-» — отмена.",
-                parse_mode="HTML",
-            )
-        except Exception:
-            ui = await callback.message.answer(
-                "✏️ <b>Ручной ответ</b>\n\nВведите текст следующим сообщением.\n"
-                "«-» — отмена.",
-                parse_mode="HTML",
             )
             await state.update_data(ui_message_id=ui.message_id)
         return await callback.answer()
@@ -429,10 +407,24 @@ async def cb_mail_tmpl_send(
 async def mail_reply_manual_text(
     message: Message, state: FSMContext, settings: Settings
 ) -> None:
+    if message.photo or (
+        message.document
+        and (message.document.mime_type or "").lower().startswith("image/")
+    ):
+        return await message.answer(
+            "📷 Отправка фото продавцу отключена. Только текст (DE/EN), пресет или HTML."
+        )
+
     text = (message.text or "").strip()
     if text in {"-", "cancel"}:
         await state.clear()
         return await message.answer("Отменено.")
+    if not text:
+        return await message.answer(
+            "Нужен текст (DE/EN) или кнопка пресет/HTML. «-» — отмена."
+        )
+    if err := seller_outbound_text_error(text):
+        return await message.answer(f"❌ {err}")
 
     uid = message.from_user.id
     data = await state.get_data()

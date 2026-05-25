@@ -7,6 +7,7 @@ import re
 from config import Settings
 from database import get_incoming_mail, get_smtp_account
 from services.mail_outbound import NoLiveProxyError, send_mail
+from services.outbound_lang import seller_outbound_text_error
 from services.presets import expand_spintax
 from services.reply_notify import ReplyNotifyCtx
 
@@ -38,6 +39,10 @@ async def send_incoming_text_reply(
     text = expand_spintax((body or "").strip())
     if not text:
         return False, "Пустой текст", None
+
+    lang_err = seller_outbound_text_error(text)
+    if lang_err:
+        return False, lang_err, None
 
     acc_id = int(mail.get("account_id") or 0)
     account = await get_smtp_account(acc_id, user_id)
