@@ -19,7 +19,10 @@ from database import (
     update_incoming_mail_lead_snapshot,
 )
 from handlers.states import LeadPrice, MailReply
-from services.gag_link import create_gag_link_for_incoming, regenerate_gag_link_for_lead
+from services.gag_link import (
+    create_gag_link_for_incoming,
+    regenerate_gag_link_for_lead,
+)
 from services.gag_link_card import (
     build_link_card_caption,
     build_link_card_keyboard,
@@ -38,6 +41,7 @@ from services.reply_notify import (
 from services.incoming_card import build_card_from_mail_row, clean_mail_body_for_card
 from services.translate import strip_html, translate_to_ru
 from utils.bg_jobs import is_running as bg_is_running, start as bg_start
+from utils.text_html import e
 
 logger = logging.getLogger(__name__)
 router = Router()
@@ -732,10 +736,8 @@ async def lead_price_set(message: Message, state: FSMContext) -> None:
     profile = await load_gag_profile(uid)
 
     try:
-        result = await create_gag_link_for_incoming(
-            uid,
-            contact_email=email,
-            lead_id=lead_id,
+        result = await regenerate_gag_link_for_lead(
+            uid, lead_id, offer_price=text
         )
         new_link = result.url
     except GagNotConfiguredError as exc:
