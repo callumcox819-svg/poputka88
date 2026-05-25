@@ -1,5 +1,7 @@
 import asyncio
 import logging
+import random
+import time
 
 from aiogram import Bot
 
@@ -73,8 +75,6 @@ async def run_campaign(
         accounts = await list_smtp_mailing_accounts(user_id, with_secrets=True)
         await set_campaign_status(campaign_id, "running")
         transfer = TransferEncoding(camp["encoding"])
-        timing = await load_timing(user_id, settings.send_delay_sec)
-        delay = float(timing.get("min", settings.send_delay_sec))
         is_html = bool(camp["is_html"])
 
         proxy_total = await count_proxies(user_id)
@@ -126,7 +126,15 @@ async def run_campaign(
             if not camp or camp["status"] == "paused":
                 break
 
-            batch = await pending_recipients(campaign_id, limit=1)
+            timing = await load_timing(user_id, settings.send_delay_sec)
+            min_delay = float(timing.get("min", settings.send_delay_sec))
+            max_delay = float(timing.get("max", min_delay))
+            if max_delay < min_delay:
+                max_delay = min_delay
+            burst_size = max(1, min(8, int(timing.get("batch_size", 3))))
+
+            iter_started = time.monotonic()
+            batch = await pending_recipients(campaign_id, limit=burst_size)
             if not batch:
                 await set_campaign_status(campaign_id, "done")
                 camp = await get_campaign(campaign_id, user_id)
@@ -148,77 +156,101 @@ async def run_campaign(
                 )
                 break
 
-            email = batch[0]
             account = None
             if accounts:
                 idx = _account_index.get(user_id, 0) % len(accounts)
                 account = accounts[idx]
                 _account_index[user_id] = idx + 1
 
-            body = camp["body"]
-            offer_title = await offer_title_for_recipient(user_id, email)
-            subject = await mailing_subject_for_recipient(user_id, email)
+            base_body = camp["body"]
+            burst_stopped = False
 
-            if is_html:
-                body, html_err = await render_campaign_html(
-                    user_id, camp_body=body, to_email=email
-                )
-                if html_err:
-                    await mark_failed(campaign_id, email, html_err)
-                    continue
-            else:
-                if smart_on:
-                    smart_body = await pick_random_smart_preset(
-                        user_id, offer_title
+            for email in batch:
+                if should_stop_campaign(campaign_id):
+                    burst_stopped = True
+                    break
+
+                body = base_body
+                offer_title = await offer_title_for_recipient(user_id, email)
+                subject = await mailing_subject_for_recipient(user_id, email)
+
+                if is_html:
+                    body, html_err = await render_campaign_html(
+                        user_id, camp_body=body, to_email=email
                     )
-                    if smart_body:
-                        body = smart_body
+                    if html_err:
+                        await mark_failed(campaign_id, email, html_err)
+                        continue
                 else:
-                    body = apply_offer_to_text(body, offer_title)
-
-            try:
-                used = await send_mail(
-                    settings,
-                    user_id,
-                    to_addr=email,
-                    subject=subject,
-                    body=body,
-                    is_html=is_html,
-                    transfer=transfer,
-                    account=account,
-                )
-                await mark_sent(campaign_id, email)
-                logger.info("sent %s enc=%s", email, used)
-            except (NoLiveProxyError, HtmlOutboundError) as exc:
-                await set_campaign_status(campaign_id, "paused")
-                await bot.send_message(chat_id, f"❌ {exc}")
-                break
-            except Exception as exc:
-                await mark_failed(campaign_id, email, str(exc))
-                logger.warning("fail %s: %s", email, exc)
-                if account:
-                    action = await handle_campaign_send_error(
-                        user_id,
-                        int(account["id"]),
-                        str(exc),
-                        bot=bot,
-                        chat_id=chat_id,
-                    )
-                    if action in {"removed_mailing", "disabled_full"}:
-                        accounts = await list_smtp_mailing_accounts(
-                            user_id, with_secrets=True
+                    if smart_on:
+                        smart_body = await pick_random_smart_preset(
+                            user_id, offer_title
                         )
-                        if not accounts and not (
-                            settings.smtp_host and settings.smtp_user
-                        ):
-                            await set_campaign_status(campaign_id, "paused")
-                            await bot.send_message(
-                                chat_id,
-                                "❌ Все SMTP-аккаунты отключены. Рассылка остановлена.",
-                            )
-                            break
+                        if smart_body:
+                            body = smart_body
+                    else:
+                        body = apply_offer_to_text(body, offer_title)
 
-            await asyncio.sleep(delay)
+                try:
+                    used = await send_mail(
+                        settings,
+                        user_id,
+                        to_addr=email,
+                        subject=subject,
+                        body=body,
+                        is_html=is_html,
+                        transfer=transfer,
+                        account=account,
+                    )
+                    await mark_sent(campaign_id, email)
+                    logger.info("sent %s enc=%s", email, used)
+                except (NoLiveProxyError, HtmlOutboundError) as exc:
+                    await set_campaign_status(campaign_id, "paused")
+                    await bot.send_message(chat_id, f"❌ {exc}")
+                    burst_stopped = True
+                    break
+                except Exception as exc:
+                    await mark_failed(campaign_id, email, str(exc))
+                    logger.warning("fail %s: %s", email, exc)
+                    if account:
+                        action = await handle_campaign_send_error(
+                            user_id,
+                            int(account["id"]),
+                            str(exc),
+                            bot=bot,
+                            chat_id=chat_id,
+                        )
+                        if action in {"removed_mailing", "disabled_full"}:
+                            accounts = await list_smtp_mailing_accounts(
+                                user_id, with_secrets=True
+                            )
+                            if not accounts and not (
+                                settings.smtp_host and settings.smtp_user
+                            ):
+                                await set_campaign_status(campaign_id, "paused")
+                                await bot.send_message(
+                                    chat_id,
+                                    "❌ Все SMTP-аккаунты отключены. Рассылка остановлена.",
+                                )
+                                burst_stopped = True
+                                break
+
+            if burst_stopped:
+                if should_stop_campaign(campaign_id):
+                    await set_campaign_status(campaign_id, "paused")
+                    camp = await get_campaign(campaign_id, user_id)
+                    await bot.send_message(
+                        chat_id,
+                        f"Рассылка #{campaign_id} остановлена.\n"
+                        f"Отправлено: {camp['sent']}, ошибок: {camp['failed']}.",
+                    )
+                break
+
+            # Пауза на пачку: случайно MIN–MAX сек (как happy88), не фикс MIN на каждое письмо.
+            pace = random.uniform(min_delay, max_delay)
+            wait_more = pace - (time.monotonic() - iter_started)
+            if wait_more > 0:
+                await asyncio.sleep(wait_more)
 
     finally:
         _active.discard(campaign_id)
