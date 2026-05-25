@@ -22,6 +22,7 @@ from database import (
 )
 from handlers.mailing import launch_campaign
 from keyboards.main_menu import main_keyboard
+from services.campaign_runner import campaign_task_active, campaign_task_stuck
 from services.presets import load_smart_texts
 from services.subject_offer import MAILING_SUBJECT_OFFER
 
@@ -52,8 +53,26 @@ async def start_mailing_from_validated_db(
 
     running = await get_running_campaign(uid)
     if running:
+        rid = int(running["id"])
+        if campaign_task_active(rid):
+            await message.answer(
+                f"Уже идёт рассылка #{rid}. /stop — остановить.",
+                reply_markup=main_keyboard(),
+            )
+            return
+        if campaign_task_stuck(rid, running.get("status")):
+            pending_n = await count_pending_recipients(rid)
+            if pending_n > 0:
+                await message.answer(
+                    f"⚠️ Рассылка #{rid} зависла (в статусе running, фон молчит).\n"
+                    f"Продолжаю: в очереди <b>{pending_n}</b>.",
+                    parse_mode="HTML",
+                    reply_markup=main_keyboard(),
+                )
+                await launch_campaign(message, settings, bot, rid, user_id=uid)
+                return
         await message.answer(
-            f"Уже идёт рассылка #{running['id']}. /stop — остановить.",
+            f"Уже идёт рассылка #{rid}. /stop — остановить.",
             reply_markup=main_keyboard(),
         )
         return

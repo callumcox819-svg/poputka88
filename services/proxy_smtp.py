@@ -122,4 +122,4 @@ async def send_via_proxy(
                 timeout=timeout,
             )
 
-    await _run()
+    await asyncio.wait_for(_run(), timeout=timeout + 15)

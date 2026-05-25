@@ -3,6 +3,8 @@ from aiogram.filters import Command
 from aiogram.types import Message
 
 from config import Settings
+from services.campaign_runner import campaign_task_stuck
+from services.mailing_timing import load_timing
 from database import (
     count_pending_recipients,
     count_smtp_accounts,
@@ -54,6 +56,11 @@ async def cmd_status(message: Message, settings: Settings) -> None:
             f"В очереди: <b>{pending}</b>\n"
             f"Ошибок: <b>{int(active.get('failed') or 0)}</b>"
         )
+        if campaign_task_stuck(cid, st):
+            lines.append(
+                "\n⚠️ <b>Фон остановился</b>, в БД ещё «running». "
+                "Нажмите /send — продолжит очередь."
+            )
     else:
         lines.append("\nОтправлено: <b>0</b> / 0")
         if last:
@@ -69,5 +76,17 @@ async def cmd_status(message: Message, settings: Settings) -> None:
     leads = await count_validated_leads(uid)
     if leads:
         lines.append(f"📧 Валидированных продавцов: <b>{leads}</b>")
-    lines.append(f"\nЗадержка между письмами: <b>{settings.send_delay_sec}</b> сек.")
+    timing = await load_timing(uid, settings.send_delay_sec)
+    mn, mx = float(timing["min"]), float(timing["max"])
+    batch = int(timing["batch_size"])
+    if abs(mn - mx) < 0.05:
+        pace = f"<b>{mn:g}</b> сек"
+    else:
+        pace = f"<b>{mn:g}–{mx:g}</b> сек"
+    lines.append(
+        f"\n⏱ Пауза между пачками: {pace} · пачка: <b>{batch}</b> писем/ящик"
+    )
+    lines.append(
+        "<i>Меню: ⚙️ Настройки → ⏱ Тайминги (MIN MAX ПАЧКА, напр. 1 2 5)</i>"
+    )
     await message.answer("\n".join(lines), parse_mode="HTML", reply_markup=main_keyboard())

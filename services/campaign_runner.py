@@ -41,6 +41,12 @@ def campaign_task_active(campaign_id: int) -> bool:
     return int(campaign_id) in _active
 
 
+def campaign_task_stuck(campaign_id: int, status: str | None) -> bool:
+    """В БД running, но фоновой задачи нет — рассылка «зависла» без уведомления."""
+    st = (status or "").strip()
+    return st == "running" and not campaign_task_active(int(campaign_id))
+
+
 def stop_campaign(campaign_id: int) -> None:
     request_stop_campaign(campaign_id)
 
@@ -66,6 +72,7 @@ async def run_campaign(
     _active.add(campaign_id)
     clear_stop_campaign(campaign_id)
 
+    crashed = False
     try:
         camp = await get_campaign(campaign_id, user_id)
         if not camp:
@@ -252,6 +259,44 @@ async def run_campaign(
             if wait_more > 0:
                 await asyncio.sleep(wait_more)
 
+    except Exception as exc:
+        crashed = True
+        logger.exception("campaign %s crashed: %s", campaign_id, exc)
+        try:
+            await set_campaign_status(campaign_id, "paused")
+            camp = await get_campaign(campaign_id, user_id)
+            sent = int((camp or {}).get("sent") or 0)
+            failed = int((camp or {}).get("failed") or 0)
+            await bot.send_message(
+                chat_id,
+                f"❌ Рассылка #{campaign_id} остановлена (ошибка в фоне).\n"
+                f"Отправлено: {sent}, ошибок: {failed}.\n"
+                f"<code>{type(exc).__name__}</code>: {str(exc)[:400]}\n\n"
+                f"/send — продолжить с того же места.",
+                parse_mode="HTML",
+            )
+        except Exception:
+            logger.exception("failed to notify campaign crash %s", campaign_id)
+
     finally:
+        try:
+            camp = await get_campaign(campaign_id, user_id)
+            if (
+                not crashed
+                and camp
+                and (camp.get("status") or "").strip() == "running"
+            ):
+                await set_campaign_status(campaign_id, "paused")
+                sent = int(camp.get("sent") or 0)
+                failed = int(camp.get("failed") or 0)
+                await bot.send_message(
+                    chat_id,
+                    f"⚠️ Рассылка #{campaign_id} прервалась без завершения "
+                    f"(фоновая задача остановилась).\n"
+                    f"Отправлено: {sent}, ошибок: {failed}.\n"
+                    f"/send — продолжить.",
+                )
+        except Exception:
+            logger.exception("failed to mark orphan campaign %s paused", campaign_id)
         _active.discard(campaign_id)
         clear_stop_campaign(campaign_id)

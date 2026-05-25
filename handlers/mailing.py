@@ -64,6 +64,14 @@ async def launch_campaign(
     uid = user_id if user_id is not None else message.from_user.id
     cid = int(campaign_id)
 
+    running = await get_running_campaign(uid)
+    if running and int(running["id"]) != cid:
+        await message.answer(
+            f"Уже идёт рассылка #{running['id']}. /stop — остановить.",
+            reply_markup=main_keyboard(),
+        )
+        return False
+
     if campaign_task_active(cid):
         if not quiet:
             await message.answer(
@@ -72,13 +80,14 @@ async def launch_campaign(
             )
         return False
 
-    running = await get_running_campaign(uid)
-    if running and int(running["id"]) != cid:
-        await message.answer(
-            f"Уже идёт рассылка #{running['id']}. /stop — остановить.",
-            reply_markup=main_keyboard(),
-        )
-        return False
+    if running and int(running["id"]) == cid:
+        if not quiet:
+            await message.answer(
+                f"▶️ Продолжаю зависшую рассылку #{cid} в фоне.",
+                reply_markup=main_keyboard(),
+            )
+        asyncio.create_task(run_campaign(bot, settings, cid, message.chat.id, uid))
+        return True
 
     asyncio.create_task(run_campaign(bot, settings, cid, message.chat.id, uid))
     if not quiet:
