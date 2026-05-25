@@ -3,8 +3,12 @@
 from __future__ import annotations
 
 import asyncio
+import logging
+import os
 import re
 from typing import List
+
+logger = logging.getLogger(__name__)
 
 from aiogram import F, Router
 from aiogram.filters import Command
@@ -267,16 +271,22 @@ async def _send_test_one(
     else:
         body = apply_offer_to_text(body, offer_title)
 
+    send_timeout = float(os.getenv("TEST_MAIL_SEND_TIMEOUT_SEC", "50"))
     try:
-        await send_mail(
-            settings,
-            user_id,
-            to_addr=to_email,
-            subject=subject,
-            body=body,
-            is_html=False,
-            account=account,
+        await asyncio.wait_for(
+            send_mail(
+                settings,
+                user_id,
+                to_addr=to_email,
+                subject=subject,
+                body=body,
+                is_html=False,
+                account=account,
+            ),
+            timeout=send_timeout,
         )
+    except asyncio.TimeoutError:
+        return False, f"Таймаут отправки ({int(send_timeout)} с)"
     except NoLiveProxyError as exc:
         return False, str(exc)
     except Exception as exc:
@@ -340,34 +350,61 @@ async def _run_test_batch(
         except Exception:
             pass
 
-    imap_extra = ""
-    if ok_n > 0:
-        try:
-            acc_n, mail_n = await poll_incoming_for_user(bot, user_id, catch_up=True)
-            imap_extra = (
-                f"\n\n📬 <b>IMAP сейчас:</b> {acc_n} ящ., новых карточек: {mail_n}"
-            )
-            if acc_n == 0:
-                imap_extra += (
-                    "\n⚠️ Нет ящиков с IMAP — добавьте imap в SMTP или /imap_check."
-                )
-            elif mail_n == 0:
-                imap_extra += (
-                    "\n<i>Новых UID нет (ответ ещё не пришёл или уже был до старта бота). "
-                    "Подождите ~25 с или «📥 Симуляция».</i>"
-                )
-        except Exception:
-            imap_extra = "\n\n📬 IMAP: не удалось опросить (см. логи Railway)."
-
     summary = (
         f"<b>Тест завершён</b> — OK: {ok_n}, ошибок: {fail_n}\n\n"
         + "\n".join(lines)
-        + imap_extra
     )
+    if ok_n > 0:
+        summary += (
+            "\n\n📬 <i>IMAP опрашивается в фоне (~1 мин). "
+            "Ответ продавца придёт карточкой или через «📥 Симуляция».</i>"
+        )
     try:
         await status_message.edit_text(summary, parse_mode="HTML")
     except Exception:
         await bot.send_message(chat_id, summary, parse_mode="HTML")
+
+    if ok_n > 0:
+        asyncio.create_task(
+            _imap_after_test(bot, chat_id, user_id, status_message.message_id)
+        )
+
+
+async def _imap_after_test(
+    bot, chat_id: int, user_id: int, reply_to_message_id: int
+) -> None:
+    """Не блокирует «Тест уже идёт» — отдельно от bg_jobs test_mail."""
+    imap_timeout = float(os.getenv("TEST_MAIL_IMAP_TIMEOUT_SEC", "90"))
+    try:
+        acc_n, mail_n = await asyncio.wait_for(
+            poll_incoming_for_user(bot, user_id, catch_up=True),
+            timeout=imap_timeout,
+        )
+        text = f"📬 <b>IMAP после теста:</b> {acc_n} ящ., новых карточек: {mail_n}"
+        if acc_n == 0:
+            text += "\n⚠️ Нет ящиков с IMAP — /imap_check или ⚡ Быстрое добавление."
+        elif mail_n == 0:
+            text += (
+                "\n<i>Новых писем нет (ответ ещё не пришёл). "
+                "Подождите или «📥 Симуляция ответа».</i>"
+            )
+    except asyncio.TimeoutError:
+        text = (
+            f"📬 IMAP: опрос прерван через {int(imap_timeout)} с "
+            "(много ящиков). Авто-опрос продолжит ловить ответ."
+        )
+    except Exception:
+        logger.exception("test_mail IMAP follow-up failed user_id=%s", user_id)
+        text = "📬 IMAP: не удалось опросить (см. логи Railway)."
+    try:
+        await bot.send_message(
+            chat_id,
+            text,
+            parse_mode="HTML",
+            reply_to_message_id=reply_to_message_id,
+        )
+    except Exception:
+        await bot.send_message(chat_id, text, parse_mode="HTML")
 
 
 @router.message(F.text == "🧪 Тест маил")

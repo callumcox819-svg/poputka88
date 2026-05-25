@@ -381,8 +381,22 @@ async def poll_incoming_for_user(
     ]
     recent = 40 if catch_up else 0
     total = 0
-    for acc in accounts:
-        total += await _process_account(bot, acc, catch_up_recent=recent)
+    if accounts:
+        sem = asyncio.Semaphore(MAX_IMAP_CONCURRENT)
+
+        async def _one(acc: dict) -> int:
+            async with sem:
+                return await _process_account(bot, acc, catch_up_recent=recent)
+
+        results = await asyncio.gather(
+            *[_one(acc) for acc in accounts],
+            return_exceptions=True,
+        )
+        for r in results:
+            if isinstance(r, int):
+                total += r
+            elif isinstance(r, BaseException):
+                logger.warning("IMAP manual poll account failed: %s", r)
     if accounts:
         logger.info(
             "IMAP manual poll user_id=%s: %s account(s), %s new card(s), catch_up=%s",
