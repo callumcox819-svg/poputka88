@@ -24,10 +24,9 @@ from database import (
     set_incoming_mail_tg_message,
     update_incoming_mail_lead_snapshot,
 )
-from services.dsn_parse import parse_delivery_failure
+from services.dsn_parse import is_delivery_failure_notification, parse_delivery_failure
 from services.imap_fetch import (
     fetch_new_mails_sync,
-    is_delivery_failure_notification,
     is_google_system_mail,
     is_own_outgoing_copy,
     service_label_from_body,
