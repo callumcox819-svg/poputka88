@@ -13,6 +13,7 @@ from config import Settings
 from database import count_proxies, list_sendable_proxies
 from services.encoding import TransferEncoding
 from services.proxy_pool import is_socks_proxy_failure, mark_proxy_dead, pick_next_proxy
+from services.html_send_tracker import record_html_send
 from services.html_spoof import prepare_html_outbound
 from services.smtp_sender import EncodingName, send_one
 
@@ -71,7 +72,7 @@ async def send_mail(
         if not proxy:
             break
         try:
-            return await send_one(
+            enc = await send_one(
                 settings,
                 to_addr=to_addr,
                 subject=subject,
@@ -84,6 +85,12 @@ async def send_mail(
                 use_tls=use_tls,
                 proxy=proxy,
             )
+            if is_html:
+                from_addr = (account or {}).get("email") or settings.smtp_user or ""
+                await record_html_send(
+                    uid, from_account=from_addr, to_addr=to_addr
+                )
+            return enc
         except Exception as exc:
             last_exc = exc
             pid = proxy.get("id")

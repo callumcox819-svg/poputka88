@@ -25,6 +25,7 @@ from database import (
     update_incoming_mail_lead_snapshot,
 )
 from services.dsn_parse import is_delivery_failure_notification, parse_delivery_failure
+from services.html_send_tracker import was_recent_html_send
 from services.imap_fetch import (
     fetch_new_mails_sync,
     is_google_system_mail,
@@ -310,8 +311,13 @@ async def _process_account(
             continue
         if is_delivery_failure_notification(subject, from_email):
             dsn = parse_delivery_failure(subject, body or "", from_email)
-            if dsn:
-                await _notify_dsn_bounce(bot, chat_id, email_addr, dsn)
+            if dsn and dsn.kind == "recipient_blocked":
+                if await was_recent_html_send(
+                    user_id,
+                    from_account=email_addr,
+                    to_addr=dsn.recipient,
+                ):
+                    await _notify_dsn_bounce(bot, chat_id, email_addr, dsn)
             skipped_system += 1
             continue
         if is_google_system_mail(from_email, from_name, subject):
