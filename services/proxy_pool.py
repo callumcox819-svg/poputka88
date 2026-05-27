@@ -2,23 +2,34 @@
 
 from __future__ import annotations
 
+import logging
+
 from database import list_sendable_proxies, update_proxy_status
+
+logger = logging.getLogger(__name__)
 
 _rr_index: dict[int, int] = {}
 
-_PROXY_ERR_MARKERS = (
-    "socks",
-    "proxy",
-    "timeout",
-    "timed out",
-    "connect",
-    "connection",
-    "refused",
-    "unreachable",
-    "network",
-    "tunnel",
+# Только эти типы / тексты = реально мёртвый SOCKS (не обрыв Gmail и не 535 auth).
+_SOCKS_EXC_NAMES = frozenset(
+    {
+        "GeneralProxyError",
+        "ProxyError",
+        "SOCKS5Error",
+        "SOCKS4Error",
+        "ProxyConnectionError",
+    }
+)
+
+_SOCKS_MSG_HINTS = (
     "generalproxyerror",
-    "socket",
+    "sockshttperror",
+    "pysocks",
+    "proxy connection",
+    "can't connect to proxy",
+    "cannot connect to proxy",
+    "0x05:",
+    "0x05 ",
 )
 
 
@@ -47,17 +58,20 @@ async def pick_next_proxy(user_id: int) -> dict | None:
     return proxy_to_dict(rows[idx])
 
 
-def is_proxy_tunnel_error(exc: BaseException) -> bool:
-    err_l = str(exc).lower()
-    return any(m in err_l for m in _PROXY_ERR_MARKERS)
+def is_socks_proxy_failure(exc: BaseException) -> bool:
+    """
+    Прокси 🔴 только при явном сбое SOCKS5.
+    Таймаут SMTP, «connection closed», 535 auth — не считаем смертью прокси.
+    """
+    if type(exc).__name__ in _SOCKS_EXC_NAMES:
+        return True
+    if "socks" in (type(exc).__module__ or "").lower():
+        return True
+    msg = f"{type(exc).__name__}: {exc}".lower()
+    return any(h in msg for h in _SOCKS_MSG_HINTS)
 
 
-async def mark_proxy_mailing_dead(
-    user_id: int, proxy_id: int, error: str
-) -> None:
-    await update_proxy_status(
-        proxy_id,
-        user_id,
-        is_active=0,
-        last_error=(error or "SMTP via proxy failed")[:500],
-    )
+async def mark_proxy_dead(user_id: int, proxy_id: int, error: str) -> None:
+    err = (error or "SOCKS5 error")[:500]
+    await update_proxy_status(proxy_id, user_id, is_active=0, last_error=err)
+    logger.warning("proxy dead user_id=%s proxy_id=%s: %s", user_id, proxy_id, err[:160])

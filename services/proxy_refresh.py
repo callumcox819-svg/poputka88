@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 
 from database import list_proxies, update_proxy_status
+from services.proxy_pool import reset_round_robin
 from services.proxy_verify import apply_check_status, test_proxy_socks
 
 
@@ -52,4 +53,5 @@ async def refresh_user_proxies(
         else:
             fail_n += 1
 
+    reset_round_robin(user_id)
     return ok_n, fail_n, len(proxies)

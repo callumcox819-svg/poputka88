@@ -12,11 +12,7 @@ from typing import Any
 from config import Settings
 from database import count_proxies, list_sendable_proxies
 from services.encoding import TransferEncoding
-from services.proxy_pool import (
-    is_proxy_tunnel_error,
-    mark_proxy_mailing_dead,
-    pick_next_proxy,
-)
+from services.proxy_pool import is_socks_proxy_failure, mark_proxy_dead, pick_next_proxy
 from services.html_spoof import prepare_html_outbound
 from services.smtp_sender import EncodingName, send_one
 
@@ -90,10 +86,14 @@ async def send_mail(
             )
         except Exception as exc:
             last_exc = exc
-            if proxy.get("id") and is_proxy_tunnel_error(exc):
-                await mark_proxy_mailing_dead(uid, int(proxy["id"]), str(exc))
+            pid = proxy.get("id")
+            if pid and is_socks_proxy_failure(exc):
+                await mark_proxy_dead(uid, int(pid), str(exc))
             continue
 
     if last_exc is not None:
         raise last_exc
-    raise NoLiveProxyError("Не удалось отправить через прокси.")
+    raise NoLiveProxyError(
+        "Не удалось отправить через прокси. "
+        "Попробуйте другой ящик или 🌐 Прокси → 🔍 Проверить."
+    )
