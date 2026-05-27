@@ -29,6 +29,8 @@ def build_message(
     is_html: bool,
     encoding: EncodingName,
     reply_to: str | None = None,
+    in_reply_to: str | None = None,
+    references: str | None = None,
 ) -> EmailMessage:
     msg = EmailMessage(policy=SMTP)
     msg["From"] = mail_from
@@ -36,6 +38,10 @@ def build_message(
     msg["Subject"] = subject
     if reply_to:
         msg["Reply-To"] = reply_to
+    if in_reply_to:
+        msg["In-Reply-To"] = in_reply_to
+    if references:
+        msg["References"] = references
 
     charset = "us-ascii" if encoding == "7bit" else "utf-8"
     cte = encoding if encoding != "7bit" else "7bit"
@@ -82,6 +88,8 @@ async def send_one(
     is_html: bool,
     transfer: TransferEncoding = TransferEncoding.AUTO,
     reply_to: str | None = None,
+    in_reply_to: str | None = None,
+    references: str | None = None,
     account: dict[str, Any] | None = None,
     from_display_name: str | None = None,
     use_tls: bool | None = None,
@@ -115,6 +123,8 @@ async def send_one(
         is_html=is_html,
         encoding=enc,
         reply_to=reply_to,
+        in_reply_to=in_reply_to,
+        references=references,
     )
 
     if proxy:

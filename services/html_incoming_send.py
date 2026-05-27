@@ -9,6 +9,10 @@ from config import Settings
 from database import get_gag_generated_link, get_incoming_mail, get_smtp_account
 from services.gag_keys import GAG_SERVICE_KEY, is_valid_gag_service
 from services.html_reply import build_incoming_html_ctx
+from services.email_thread import (
+    spoof_subject_for_thread_reply,
+    thread_headers_from_incoming_mail,
+)
 from services.html_spoof import HtmlOutboundError, get_mandatory_spoof_subject
 from services.html_templates import load_html_template_for_user
 from services.mail_outbound import NoLiveProxyError, send_mail
@@ -106,7 +110,8 @@ async def build_incoming_html_body(
         html_body = html_body.replace("{{SIGNATURE}}", sig)
 
     try:
-        subject = await get_mandatory_spoof_subject(user_id)
+        spoof_subj = await get_mandatory_spoof_subject(user_id)
+        subject = spoof_subject_for_thread_reply(spoof_subj)
     except HtmlOutboundError as exc:
         return None, str(exc), IncomingHtmlSendResult(ok=False, error=str(exc))
 
@@ -143,6 +148,19 @@ async def send_incoming_html(
     if not account:
         return IncomingHtmlSendResult(ok=False, error="SMTP-аккаунт не найден")
 
+    mail = await get_incoming_mail(mail_id, user_id)
+    in_reply_to, references = (
+        thread_headers_from_incoming_mail(mail or {}) if mail else (None, None)
+    )
+    if not in_reply_to:
+        return IncomingHtmlSendResult(
+            ok=False,
+            error=(
+                "Нет Message-ID у входящего письма — не могу ответить в цепочке. "
+                "Дождитесь нового письма продавца (IMAP) или ответьте текстом."
+            ),
+        )
+
     try:
         await send_mail(
             settings,
@@ -152,6 +170,8 @@ async def send_incoming_html(
             body=html_body,
             is_html=True,
             account=account,
+            in_reply_to=in_reply_to,
+            references=references,
         )
     except HtmlOutboundError as exc:
         return IncomingHtmlSendResult(ok=False, error=str(exc))

@@ -13,6 +13,7 @@ from config import Settings
 from database import count_proxies, list_sendable_proxies
 from services.encoding import TransferEncoding
 from services.proxy_pool import is_socks_proxy_failure, mark_proxy_dead, pick_next_proxy
+from services.email_thread import spoof_subject_for_thread_reply
 from services.html_send_tracker import record_html_send
 from services.html_spoof import prepare_html_outbound
 from services.smtp_sender import EncodingName, send_one
@@ -40,6 +41,8 @@ async def send_mail(
     is_html: bool = False,
     transfer: TransferEncoding = TransferEncoding.AUTO,
     reply_to: str | None = None,
+    in_reply_to: str | None = None,
+    references: str | None = None,
     account: dict[str, Any] | None = None,
     use_tls: bool | None = None,
 ) -> EncodingName:
@@ -50,6 +53,8 @@ async def send_mail(
     subject, body, from_display_name = await prepare_html_outbound(
         uid, subject=subject, body=body, is_html=is_html
     )
+    if is_html and in_reply_to:
+        subject = spoof_subject_for_thread_reply(subject)
 
     if not await user_has_proxies(uid):
         raise NoLiveProxyError(
@@ -80,6 +85,8 @@ async def send_mail(
                 is_html=is_html,
                 transfer=transfer,
                 reply_to=reply_to,
+                in_reply_to=in_reply_to,
+                references=references,
                 account=account,
                 from_display_name=from_display_name,
                 use_tls=use_tls,
