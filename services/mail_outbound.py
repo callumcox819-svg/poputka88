@@ -7,6 +7,7 @@
 
 from __future__ import annotations
 
+import logging
 from typing import Any
 
 from config import Settings
@@ -16,7 +17,10 @@ from services.proxy_pool import is_socks_proxy_failure, mark_proxy_dead, pick_ne
 from services.email_thread import spoof_subject_for_thread_reply
 from services.html_send_tracker import record_html_send
 from services.html_spoof import prepare_html_outbound
+from services.smtp_errors import is_transient_smtp_send_failure
 from services.smtp_sender import EncodingName, send_one
+
+logger = logging.getLogger(__name__)
 
 
 class NoLiveProxyError(RuntimeError):
@@ -71,41 +75,60 @@ async def send_mail(
 
     last_exc: Exception | None = None
     attempts = len(sendable)
+    rounds = 2 if attempts > 0 else 0
 
-    for _ in range(attempts):
-        proxy = await pick_next_proxy(uid)
-        if not proxy:
-            break
-        try:
-            enc = await send_one(
-                settings,
-                to_addr=to_addr,
-                subject=subject,
-                body=body,
-                is_html=is_html,
-                transfer=transfer,
-                reply_to=reply_to,
-                in_reply_to=in_reply_to,
-                references=references,
-                account=account,
-                from_display_name=from_display_name,
-                use_tls=use_tls,
-                proxy=proxy,
-            )
-            if is_html:
-                from_addr = (account or {}).get("email") or settings.smtp_user or ""
-                await record_html_send(
-                    uid, from_account=from_addr, to_addr=to_addr
+    for _round in range(rounds):
+        for _ in range(attempts):
+            proxy = await pick_next_proxy(uid)
+            if not proxy:
+                break
+            try:
+                enc = await send_one(
+                    settings,
+                    to_addr=to_addr,
+                    subject=subject,
+                    body=body,
+                    is_html=is_html,
+                    transfer=transfer,
+                    reply_to=reply_to,
+                    in_reply_to=in_reply_to,
+                    references=references,
+                    account=account,
+                    from_display_name=from_display_name,
+                    use_tls=use_tls,
+                    proxy=proxy,
                 )
-            return enc
-        except Exception as exc:
-            last_exc = exc
-            pid = proxy.get("id")
-            if pid and is_socks_proxy_failure(exc):
-                await mark_proxy_dead(uid, int(pid), str(exc))
-            continue
+                if is_html:
+                    from_addr = (account or {}).get("email") or settings.smtp_user or ""
+                    await record_html_send(
+                        uid, from_account=from_addr, to_addr=to_addr
+                    )
+                return enc
+            except Exception as exc:
+                last_exc = exc
+                pid = proxy.get("id")
+                if pid and is_socks_proxy_failure(exc):
+                    await mark_proxy_dead(uid, int(pid), str(exc))
+                continue
+        if last_exc is None or not is_transient_smtp_send_failure(last_exc):
+            break
+        if _round == 0:
+            logger.warning(
+                "send_mail transient SMTP user_id=%s to=%s html=%s: %s — retry all proxies",
+                uid,
+                to_addr,
+                is_html,
+                last_exc,
+            )
 
     if last_exc is not None:
+        logger.warning(
+            "send_mail failed user_id=%s to=%s html=%s: %s",
+            uid,
+            to_addr,
+            is_html,
+            last_exc,
+        )
         raise last_exc
     raise NoLiveProxyError(
         "Не удалось отправить через прокси. "

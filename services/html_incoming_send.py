@@ -2,8 +2,11 @@
 
 from __future__ import annotations
 
+import logging
 import re
 from dataclasses import dataclass
+
+logger = logging.getLogger(__name__)
 
 from config import Settings
 from database import get_gag_generated_link, get_incoming_mail, get_smtp_account
@@ -16,6 +19,7 @@ from services.email_thread import (
 from services.html_spoof import HtmlOutboundError, get_mandatory_spoof_subject
 from services.html_templates import load_html_template_for_user
 from services.mail_outbound import NoLiveProxyError, send_mail
+from services.smtp_errors import format_send_error_for_user
 from services.placeholders import apply_placeholders
 from services.user_settings import get_setting
 
@@ -178,7 +182,17 @@ async def send_incoming_html(
     except NoLiveProxyError as exc:
         return IncomingHtmlSendResult(ok=False, error=str(exc))
     except Exception as exc:
-        return IncomingHtmlSendResult(ok=False, error=str(exc)[:400])
+        logger.warning(
+            "send_incoming_html failed user_id=%s mail_id=%s kind=%s: %s",
+            user_id,
+            mail_id,
+            kind,
+            exc,
+        )
+        return IncomingHtmlSendResult(
+            ok=False,
+            error=format_send_error_for_user(exc, is_html=True),
+        )
 
     meta.ok = True
     return meta
