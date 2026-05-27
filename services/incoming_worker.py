@@ -24,13 +24,16 @@ from database import (
     set_incoming_mail_tg_message,
     update_incoming_mail_lead_snapshot,
 )
+from services.dsn_parse import parse_delivery_failure
 from services.imap_fetch import (
     fetch_new_mails_sync,
+    is_delivery_failure_notification,
     is_google_system_mail,
     is_own_outgoing_copy,
     service_label_from_body,
     service_label_from_link,
 )
+from utils.text_html import e
 from services.incoming_card import build_card_from_mail_row
 from services.lead_resolve import resolve_validated_lead
 
@@ -224,6 +227,38 @@ async def _notify_incoming(
                 )
 
 
+async def _notify_dsn_bounce(
+    bot: Bot,
+    chat_id: int,
+    account_email: str,
+    dsn,
+) -> None:
+    """DSN «Message blocked» — адрес получателя живой, не дошло одно письмо."""
+    if dsn.kind == "recipient_blocked":
+        icon = "🚫"
+        hint = (
+            "Почта получателя <b>живая</b> — Gmail/провайдер отклонил "
+            "<b>это</b> письмо (часто HTML/ссылки). SMTP-ящик не «умер»."
+        )
+    elif dsn.kind == "recipient_invalid":
+        icon = "📭"
+        hint = "Адрес, скорее всего, недоступен — в рассылку его лучше не слать."
+    else:
+        icon = "⚠️"
+        hint = "См. текст отбоя в почте отправителя."
+
+    text = (
+        f"{icon} <b>Не доставлено</b> с <code>{e(account_email)}</code>\n\n"
+        f"Кому: <code>{e(dsn.recipient)}</code>\n"
+        f"{e(dsn.summary)}\n\n"
+        f"<i>{hint}</i>"
+    )
+    try:
+        await bot.send_message(int(chat_id), text, parse_mode="HTML")
+    except TelegramBadRequest:
+        await bot.send_message(int(chat_id), text)
+
+
 async def _process_account(
     bot: Bot, acc: dict, *, catch_up_recent: int = 0
 ) -> int:
@@ -273,6 +308,12 @@ async def _process_account(
             continue
         if is_own_outgoing_copy(from_email, email_addr, subject):
             skipped_own += 1
+            continue
+        if is_delivery_failure_notification(subject, from_email):
+            dsn = parse_delivery_failure(subject, body or "", from_email)
+            if dsn:
+                await _notify_dsn_bounce(bot, chat_id, email_addr, dsn)
+            skipped_system += 1
             continue
         if is_google_system_mail(from_email, from_name, subject):
             skipped_system += 1

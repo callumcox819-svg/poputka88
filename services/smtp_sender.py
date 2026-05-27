@@ -15,6 +15,7 @@ import aiosmtplib
 from config import Settings
 from services.encoding import TransferEncoding, resolve_encoding
 from services.proxy_smtp import send_via_proxy
+from services.translate import strip_html
 
 EncodingName = Literal["7bit", "quoted-printable", "base64"]
 
@@ -36,15 +37,23 @@ def build_message(
     if reply_to:
         msg["Reply-To"] = reply_to
 
-    subtype = "html" if is_html else "plain"
     charset = "us-ascii" if encoding == "7bit" else "utf-8"
+    cte = encoding if encoding != "7bit" else "7bit"
 
-    if encoding == "7bit":
-        msg.set_content(body, subtype=subtype, charset=charset, cte="7bit")
+    if is_html:
+        plain = strip_html(body).strip()
+        if len(plain) < 8:
+            plain = "Please view the HTML version of this message."
+        msg.set_content(plain, subtype="plain", charset=charset, cte=cte)
+        msg.add_alternative(body, subtype="html", charset=charset, cte=cte)
+    elif encoding == "7bit":
+        msg.set_content(body, subtype="plain", charset=charset, cte="7bit")
     elif encoding == "quoted-printable":
-        msg.set_content(body, subtype=subtype, charset=charset, cte="quoted-printable")
+        msg.set_content(
+            body, subtype="plain", charset=charset, cte="quoted-printable"
+        )
     else:
-        msg.set_content(body, subtype=subtype, charset=charset, cte="base64")
+        msg.set_content(body, subtype="plain", charset=charset, cte="base64")
 
     return msg
 

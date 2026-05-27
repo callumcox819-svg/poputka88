@@ -81,6 +81,8 @@ def _norm(err: str | None) -> str:
 
 def is_recipient_error(err: str | None) -> bool:
     s = _norm(err)
+    if is_per_recipient_message_block(err):
+        return True
     return any(p in s for p in _RECIPIENT_ONLY)
 
 
@@ -91,9 +93,28 @@ def is_invalid_credentials_error(err: str | None) -> bool:
     return any(p in s for p in _INVALID_CREDENTIALS)
 
 
+def is_per_recipient_message_block(err: str | None) -> bool:
+    """
+    «Message blocked» для конкретного To (как в DSN Gmail) — не блок всего SMTP.
+    """
+    s = _norm(err)
+    if "message blocked" not in s and "message rejected" not in s:
+        return False
+    if re.search(
+        r"your message to\s+[\w.+\-]+@[\w.\-]+\.[a-z]{2,}\s+has been blocked",
+        s,
+    ):
+        return True
+    if "final-recipient:" in s and ("blocked" in s or "5.7" in s):
+        return True
+    return False
+
+
 def is_smtp_account_block_error(err: str | None) -> bool:
     """Ошибка ящика (лимит, блок) — не ошибка одного получателя."""
     if is_recipient_error(err):
+        return False
+    if is_per_recipient_message_block(err):
         return False
     if is_invalid_credentials_error(err):
         return True
