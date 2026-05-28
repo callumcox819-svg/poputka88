@@ -23,7 +23,7 @@ VALIDEMAIL_API_KEY_4 = "c4e3f3aff1ddde439fbd1bd42c7f3e59"  # 4-й ключ valid
 
 VALIDEMAIL_API_KEY_5 = "c1a4dde2a2ef3bd994158c35a54fdfcf"  # 5-й ключ validemail.co
 
-DEEPL_API_KEY = "sk-9c1e22408a3c43b69f01978b023fbda0"  # DeepL для кнопки «Перевести» (или DEEPL_API_KEY в Variables)
+DEEPL_API_KEY = ""  # DeepL для кнопки «Перевести» (лучше: Railway Variables DEEPL_API_KEY)
 
 DATABASE_URL = ""  # PostgreSQL на Railway (пусто = SQLite data/bot.db локально)
 

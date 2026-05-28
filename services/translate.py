@@ -16,14 +16,6 @@ _HTML_TAG_RE = re.compile(r"<[^>]+>")
 
 
 def _deepl_key() -> str:
-    try:
-        import config as cfg
-
-        hard = (getattr(cfg, "DEEPL_API_KEY", None) or "").strip()
-        if hard:
-            return hard
-    except Exception:
-        pass
     return os.getenv("DEEPL_API_KEY", "").strip()
 
 
@@ -76,9 +68,12 @@ async def _translate_gtx(text: str) -> Optional[str]:
                 },
             ) as resp:
                 if resp.status != 200:
+                    raw = await resp.text()
+                    logger.warning("GTX HTTP %s: %s", resp.status, raw[:300])
                     return None
                 data = await resp.json(content_type=None)
                 if not isinstance(data, list) or not data or not isinstance(data[0], list):
+                    logger.warning("GTX bad response shape: %s", type(data).__name__)
                     return None
                 parts = []
                 for row in data[0]:
@@ -87,6 +82,7 @@ async def _translate_gtx(text: str) -> Optional[str]:
                 out = "".join(parts).strip()
                 return out or None
     except Exception:
+        logger.exception("GTX request failed")
         return None
     return None
 
