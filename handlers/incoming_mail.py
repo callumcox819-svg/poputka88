@@ -46,6 +46,136 @@ from utils.text_html import e
 logger = logging.getLogger(__name__)
 router = Router()
 
+
+def _gag_recreate_keyboard(mail_id: int) -> InlineKeyboardMarkup:
+    b = InlineKeyboardBuilder()
+    b.button(text="✅ Да", callback_data=f"gag_recreate:yes:{mail_id}")
+    b.button(text="❌ Нет", callback_data=f"gag_recreate:no:{mail_id}")
+    b.adjust(2)
+    return b.as_markup()
+
+
+async def _refresh_incoming_card(msg: Message, mail_id: int, user_id: int) -> None:
+    mail = await get_incoming_mail(mail_id, user_id)
+    if not mail:
+        return
+    text, kb = build_card_from_mail_row(mail)
+    try:
+        await msg.edit_text(
+            text,
+            reply_markup=kb,
+            parse_mode="HTML",
+            disable_web_page_preview=True,
+        )
+    except Exception:
+        pass
+
+
+async def _show_gag_link_card(
+    bot,
+    msg: Message,
+    mail_id: int,
+    user_id: int,
+) -> None:
+    mail = await get_incoming_mail(mail_id, user_id)
+    if not mail:
+        return
+    link = (mail.get("generated_link") or "").strip()
+    if not link:
+        return
+
+    await _refresh_incoming_card(msg, mail_id, user_id)
+
+    profile = await load_gag_profile(user_id)
+    item_link = ""
+    lead_id = mail.get("lead_id")
+    if lead_id:
+        lead = await get_validated_lead_by_id(user_id, int(lead_id))
+        if lead:
+            item_link = (lead.get("item_link") or "").strip()
+    await send_generated_link_card(
+        bot,
+        msg.chat.id,
+        offer_title=(mail.get("product_title") or "").strip(),
+        offer_price=(mail.get("offer_price") or "").strip(),
+        photo_url=(mail.get("photo_url") or "").strip(),
+        profile_title=profile.title,
+        service_label=(mail.get("service_label") or "").strip(),
+        item_link=item_link,
+        link=link,
+        anchor_message_id=int(msg.message_id),
+        lead_id=int(lead_id) if lead_id else None,
+    )
+
+
+async def _create_gag_link_job(
+    bot,
+    msg: Message,
+    mail_id: int,
+    user_id: int,
+    *,
+    force_recreate: bool = False,
+) -> None:
+    mail = await get_incoming_mail(mail_id, user_id)
+    if not mail:
+        return
+    contact = (mail.get("from_email") or "").strip().lower()
+
+    if not force_recreate:
+        existing = await get_gag_generated_link(
+            user_id, incoming_id=mail_id, seller_email=contact
+        )
+        if (existing or "").strip():
+            await inherit_incoming_gag_link(mail_id, user_id, contact)
+            await _refresh_incoming_card(msg, mail_id, user_id)
+            await bot.send_message(
+                msg.chat.id,
+                "ℹ️ Ссылка для этого продавца уже есть.\n\n"
+                "Пересоздать ссылку? (текущий сервис из 👤 Профиль)",
+                reply_markup=_gag_recreate_keyboard(mail_id),
+                reply_to_message_id=msg.message_id,
+            )
+            return
+
+    try:
+        lead_id = mail.get("lead_id")
+        if force_recreate and lead_id:
+            await regenerate_gag_link_for_lead(user_id, int(lead_id))
+        else:
+            await create_gag_link_for_incoming(
+                user_id,
+                contact_email=contact,
+                lead_id=lead_id,
+                incoming_mail_id=mail_id,
+                subject=(mail.get("subject") or ""),
+            )
+    except GagNotConfiguredError as exc:
+        await bot.send_message(
+            msg.chat.id,
+            f"❌ {exc}",
+            parse_mode="HTML",
+            reply_to_message_id=msg.message_id,
+        )
+        return
+    except Exception as exc:
+        logger.exception("gag link mail_id=%s force=%s", mail_id, force_recreate)
+        await save_incoming_gag_link(mail_id, user_id, url="", error=str(exc)[:400])
+        await bot.send_message(
+            msg.chat.id,
+            f"❌ Ошибка: {str(exc)[:400]}",
+            reply_to_message_id=msg.message_id,
+        )
+        return
+
+    await _show_gag_link_card(bot, msg, mail_id, user_id)
+    if force_recreate:
+        await bot.send_message(
+            msg.chat.id,
+            "✅ Ссылка пересоздана (сервис из профиля).",
+            reply_to_message_id=msg.message_id,
+        )
+
+
 REPLY_CHOICE_TEXT = (
     "Введите текст сообщением (DE/EN) или выберите пресет / HTML.\n\n"
     "<i>HTML: прокси + GAG-ссылка. Имя (From) и тема — строго из "
@@ -526,7 +656,7 @@ async def cb_mail_translate(callback: CallbackQuery) -> None:
         await callback.answer("⏳ Перевод уже выполняется…", show_alert=True)
 
 
-@router.callback_query(F.data.startswith("goo_mail:"))
+@router.callback_query(F.data.regexp(r"^goo_mail:\d+$"))
 async def cb_goo_mail(callback: CallbackQuery) -> None:
     try:
         mail_id = int((callback.data or "").split(":", 1)[1])
@@ -536,106 +666,78 @@ async def cb_goo_mail(callback: CallbackQuery) -> None:
     uid = callback.from_user.id
     if bg_is_running(uid, "gag_link"):
         return await callback.answer("⏳ Ссылка уже создаётся…", show_alert=True)
-    await callback.answer("⏳ Создаю ссылку…", show_alert=False)
 
     msg = callback.message
+    if not msg:
+        return await callback.answer("Нет сообщения", show_alert=True)
+
+    mail = await get_incoming_mail(mail_id, uid)
+    if not mail:
+        return await callback.answer("Письмо не найдено", show_alert=True)
+
+    contact = (mail.get("from_email") or "").strip().lower()
+    existing = await get_gag_generated_link(
+        uid, incoming_id=mail_id, seller_email=contact
+    )
+    if (existing or "").strip():
+        await inherit_incoming_gag_link(mail_id, uid, contact)
+        await _refresh_incoming_card(msg, mail_id, uid)
+        await callback.answer()
+        await callback.bot.send_message(
+            msg.chat.id,
+            "ℹ️ Ссылка для этого продавца уже есть.\n\n"
+            "Пересоздать ссылку? (текущий сервис из 👤 Профиль)",
+            reply_markup=_gag_recreate_keyboard(mail_id),
+            reply_to_message_id=msg.message_id,
+        )
+        return
+
+    await callback.answer("⏳ Создаю ссылку…", show_alert=False)
     bot = callback.bot
 
     async def _job() -> None:
+        await _create_gag_link_job(bot, msg, mail_id, uid, force_recreate=False)
+
+    if not bg_start(uid, "gag_link", _job()):
+        await callback.answer("⏳ Ссылка уже создаётся…", show_alert=True)
+
+
+@router.callback_query(F.data.startswith("gag_recreate:"))
+async def cb_gag_recreate(callback: CallbackQuery) -> None:
+    parts = (callback.data or "").split(":")
+    if len(parts) != 3:
+        return await callback.answer("Неверные данные", show_alert=True)
+    action, mail_id_s = parts[1], parts[2]
+    try:
+        mail_id = int(mail_id_s)
+    except ValueError:
+        return await callback.answer("Неверные данные", show_alert=True)
+
+    uid = callback.from_user.id
+    msg = callback.message
+    if not msg:
+        return await callback.answer("Нет сообщения", show_alert=True)
+
+    if action == "no":
         mail = await get_incoming_mail(mail_id, uid)
-        if not mail or not msg:
-            return
-        contact = (mail.get("from_email") or "").strip().lower()
-        existing = await get_gag_generated_link(
-            uid, incoming_id=mail_id, seller_email=contact
-        )
-        if (existing or "").strip():
+        if mail:
+            contact = (mail.get("from_email") or "").strip().lower()
             await inherit_incoming_gag_link(mail_id, uid, contact)
-            mail2 = await get_incoming_mail(mail_id, uid)
-            if mail2 and msg:
-                text, kb = build_card_from_mail_row(mail2)
-                try:
-                    await msg.edit_text(
-                        text,
-                        reply_markup=kb,
-                        parse_mode="HTML",
-                        disable_web_page_preview=True,
-                    )
-                except Exception:
-                    pass
-                await bot.send_message(
-                    msg.chat.id,
-                    "ℹ️ Ссылка для этого продавца уже была — использую её.",
-                    reply_to_message_id=msg.message_id,
-                )
-            return
-        try:
-            await create_gag_link_for_incoming(
-                uid,
-                contact_email=contact,
-                lead_id=mail.get("lead_id"),
-                incoming_mail_id=mail_id,
-                subject=(mail.get("subject") or ""),
-            )
-        except GagNotConfiguredError as exc:
-            await bot.send_message(
-                msg.chat.id,
-                f"❌ {exc}",
-                parse_mode="HTML",
-                reply_to_message_id=msg.message_id,
-            )
-            return
-        except Exception as exc:
-            logger.exception("goo_mail mail_id=%s", mail_id)
-            await save_incoming_gag_link(
-                mail_id, uid, url="", error=str(exc)[:400]
-            )
-            await bot.send_message(
-                msg.chat.id,
-                f"❌ Ошибка: {str(exc)[:400]}",
-                reply_to_message_id=msg.message_id,
-            )
-            return
+            await _refresh_incoming_card(msg, mail_id, uid)
+        await callback.answer("Оставляю текущую ссылку", show_alert=False)
+        return
 
-        mail2 = await get_incoming_mail(mail_id, uid)
-        if not mail2:
-            return
-        link = (mail2.get("generated_link") or "").strip()
-        if not link:
-            return
+    if action != "yes":
+        return await callback.answer("Неверные данные", show_alert=True)
 
-        text, kb = build_card_from_mail_row(mail2)
-        anchor = int(msg.message_id)
-        try:
-            await msg.edit_text(
-                text,
-                reply_markup=kb,
-                parse_mode="HTML",
-                disable_web_page_preview=True,
-            )
-        except Exception:
-            pass
+    if bg_is_running(uid, "gag_link"):
+        return await callback.answer("⏳ Ссылка уже создаётся…", show_alert=True)
 
-        profile = await load_gag_profile(uid)
-        item_link = ""
-        lead_id = mail2.get("lead_id")
-        if lead_id:
-            lead = await get_validated_lead_by_id(uid, int(lead_id))
-            if lead:
-                item_link = (lead.get("item_link") or "").strip()
-        await send_generated_link_card(
-            bot,
-            msg.chat.id,
-            offer_title=(mail2.get("product_title") or "").strip(),
-            offer_price=(mail2.get("offer_price") or "").strip(),
-            photo_url=(mail2.get("photo_url") or "").strip(),
-            profile_title=profile.title,
-            service_label=(mail2.get("service_label") or "").strip(),
-            item_link=item_link,
-            link=link,
-            anchor_message_id=anchor,
-            lead_id=int(lead_id) if lead_id else None,
-        )
+    await callback.answer("⏳ Пересоздаю ссылку…", show_alert=False)
+    bot = callback.bot
+
+    async def _job() -> None:
+        await _create_gag_link_job(bot, msg, mail_id, uid, force_recreate=True)
 
     if not bg_start(uid, "gag_link", _job()):
         await callback.answer("⏳ Ссылка уже создаётся…", show_alert=True)
