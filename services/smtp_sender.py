@@ -5,6 +5,7 @@
 
 from __future__ import annotations
 
+import re
 import ssl
 from email.message import EmailMessage
 from email.policy import SMTP
@@ -18,6 +19,15 @@ from services.proxy_smtp import send_via_proxy
 from services.translate import strip_html
 
 EncodingName = Literal["7bit", "quoted-printable", "base64"]
+
+_HDR_WS_RE = re.compile(r"\s+")
+
+
+def _clean_header_value(value: str) -> str:
+    # Prevent header injection / invalid RFC 5322 values.
+    v = (value or "").replace("\r", " ").replace("\n", " ")
+    v = _HDR_WS_RE.sub(" ", v).strip()
+    return v
 
 
 def build_message(
@@ -33,15 +43,15 @@ def build_message(
     references: str | None = None,
 ) -> EmailMessage:
     msg = EmailMessage(policy=SMTP)
-    msg["From"] = mail_from
-    msg["To"] = to_addr
-    msg["Subject"] = subject
+    msg["From"] = _clean_header_value(mail_from)
+    msg["To"] = _clean_header_value(to_addr)
+    msg["Subject"] = _clean_header_value(subject)
     if reply_to:
-        msg["Reply-To"] = reply_to
+        msg["Reply-To"] = _clean_header_value(reply_to)
     if in_reply_to:
-        msg["In-Reply-To"] = in_reply_to
+        msg["In-Reply-To"] = _clean_header_value(in_reply_to)
     if references:
-        msg["References"] = references
+        msg["References"] = _clean_header_value(references)
 
     charset = "us-ascii" if encoding == "7bit" else "utf-8"
     cte = encoding if encoding != "7bit" else "7bit"

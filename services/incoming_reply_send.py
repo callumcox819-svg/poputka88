@@ -13,7 +13,7 @@ from services.reply_notify import ReplyNotifyCtx
 
 
 def _reply_subject(mail: dict) -> str:
-    subj = (mail.get("subject") or "").strip()
+    subj = (mail.get("subject") or "").replace("\r", " ").replace("\n", " ").strip()
     if not subj:
         return "Re:"
     if re.match(r"^re:\s*", subj, flags=re.I):
