@@ -495,7 +495,7 @@ async def cb_mail_translate(callback: CallbackQuery) -> None:
             try:
                 await bot.send_message(
                     msg.chat.id,
-                    "❌ Не удалось перевести. Проверьте DEEPL_API_KEY или попробуйте позже.",
+                    "❌ Не удалось перевести. Проверьте DEEPSEEK_API_KEY или попробуйте позже.",
                     reply_to_message_id=msg.message_id,
                 )
             except Exception:

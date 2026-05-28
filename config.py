@@ -23,7 +23,10 @@ VALIDEMAIL_API_KEY_4 = "c4e3f3aff1ddde439fbd1bd42c7f3e59"  # 4-й ключ valid
 
 VALIDEMAIL_API_KEY_5 = "c1a4dde2a2ef3bd994158c35a54fdfcf"  # 5-й ключ validemail.co
 
-DEEPL_API_KEY = ""  # DeepL для кнопки «Перевести» (лучше: Railway Variables DEEPL_API_KEY)
+# Перевод через DeepSeek (Railway Variables)
+DEEPSEEK_API_KEY = ""  # ключ с https://platform.deepseek.com/api_keys (лучше держать только в Variables)
+DEEPSEEK_API_BASE = ""  # обычно пусто (по умолчанию https://api.deepseek.com)
+DEEPSEEK_TRANSLATE_MODEL = ""  # обычно пусто (по умолчанию deepseek-v4-flash)
 
 DATABASE_URL = ""  # PostgreSQL на Railway (пусто = SQLite data/bot.db локально)
 
@@ -49,7 +52,9 @@ try:
         "VALIDEMAIL_API_KEY_3",
         "VALIDEMAIL_API_KEY_4",
         "VALIDEMAIL_API_KEY_5",
-        "DEEPL_API_KEY",
+        "DEEPSEEK_API_KEY",
+        "DEEPSEEK_API_BASE",
+        "DEEPSEEK_TRANSLATE_MODEL",
         "DATABASE_URL",
     ):
         _v = getattr(_cl, _k, None)

@@ -1,4 +1,4 @@
-"""Перевод входящих писем: DeepL (если ключ задан), иначе Google GTX."""
+"""Перевод входящих писем: DeepSeek (если ключ задан), иначе Google GTX."""
 
 from __future__ import annotations
 
@@ -15,8 +15,8 @@ _WS_RE = re.compile(r"\s+")
 _HTML_TAG_RE = re.compile(r"<[^>]+>")
 
 
-def _deepl_key() -> str:
-    return os.getenv("DEEPL_API_KEY", "").strip()
+def _deepseek_key() -> str:
+    return os.getenv("DEEPSEEK_API_KEY", "").strip()
 
 
 def strip_html(text: str) -> str:
@@ -24,32 +24,45 @@ def strip_html(text: str) -> str:
     return _WS_RE.sub(" ", t).strip()
 
 
-async def _translate_deepl(text: str, api_key: str) -> Optional[str]:
-    base = os.getenv("DEEPL_API_BASE", "https://api-free.deepl.com").rstrip("/")
-    if api_key.endswith(":fx") or ":fx" in api_key:
-        base = "https://api-free.deepl.com"
-    url = f"{base}/v2/translate"
-    data = {
-        "auth_key": api_key.replace(":fx", ""),
-        "text": text[:4500],
-        "target_lang": "RU",
+async def _translate_deepseek(text: str, api_key: str) -> Optional[str]:
+    base = (os.getenv("DEEPSEEK_API_BASE") or "https://api.deepseek.com").rstrip("/")
+    url = f"{base}/chat/completions"
+    payload = {
+        "model": (os.getenv("DEEPSEEK_TRANSLATE_MODEL") or "deepseek-v4-flash").strip(),
+        "thinking": {"type": "disabled"},
+        "stream": False,
+        "messages": [
+            {
+                "role": "system",
+                "content": (
+                    "Translate the user text into Russian. "
+                    "Return ONLY the translated text, without quotes or explanations."
+                ),
+            },
+            {"role": "user", "content": text[:4200]},
+        ],
     }
-    timeout = aiohttp.ClientTimeout(total=35)
+    headers = {
+        "Authorization": f"Bearer {api_key}",
+        "Content-Type": "application/json",
+    }
+    timeout = aiohttp.ClientTimeout(total=45)
     try:
         async with aiohttp.ClientSession(timeout=timeout) as session:
-            async with session.post(url, data=data) as resp:
+            async with session.post(url, json=payload, headers=headers) as resp:
                 if resp.status != 200:
                     raw = await resp.text()
-                    logger.warning("DeepL HTTP %s: %s", resp.status, raw[:300])
+                    logger.warning("DeepSeek HTTP %s: %s", resp.status, raw[:300])
                     return None
                 payload = await resp.json(content_type=None)
-                trs = (payload or {}).get("translations") or []
-                if not trs:
+                choices = (payload or {}).get("choices") or []
+                if not choices:
                     return None
-                out = (trs[0].get("text") or "").strip()
+                msg = choices[0].get("message") or {}
+                out = (msg.get("content") or "").strip()
                 return out or None
     except Exception:
-        logger.exception("DeepL request failed")
+        logger.exception("DeepSeek request failed")
         return None
 
 
@@ -93,9 +106,9 @@ async def translate_to_ru(text: str, *, preserve_blocks: bool = False) -> Option
         return None
 
     async def _one(block: str) -> Optional[str]:
-        key = _deepl_key()
+        key = _deepseek_key()
         if key:
-            out = await _translate_deepl(block, key)
+            out = await _translate_deepseek(block, key)
             if out:
                 return out
         return await _translate_gtx(block)

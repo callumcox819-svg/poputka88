@@ -14,4 +14,6 @@
 # VALIDEMAIL_API_KEY_4 = ""
 # VALIDEMAIL_API_KEY_5 = ""
 # DATABASE_URL = ""  # postgresql://... на Railway
-# DEEPL_API_KEY = ""
+# DEEPSEEK_API_KEY = ""
+# DEEPSEEK_API_BASE = ""
+# DEEPSEEK_TRANSLATE_MODEL = ""
