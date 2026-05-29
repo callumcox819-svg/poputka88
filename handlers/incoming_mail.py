@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 
 from aiogram import F, Router
@@ -45,6 +46,23 @@ from utils.text_html import e
 
 logger = logging.getLogger(__name__)
 router = Router()
+
+
+def _format_gag_error(exc: BaseException) -> str:
+    if isinstance(exc, asyncio.TimeoutError):
+        return (
+            "Таймаут GAG API (сервер не ответил вовремя). "
+            "Попробуйте «Создать ссылку» ещё раз через 10–20 с."
+        )
+    if isinstance(exc, asyncio.CancelledError):
+        return (
+            "Запрос прерван (перезапуск бота на сервере). "
+            "Нажмите «Создать ссылку» снова."
+        )
+    text = str(exc).strip()
+    if not text:
+        text = type(exc).__name__
+    return text[:400]
 
 
 def _gag_recreate_keyboard(mail_id: int) -> InlineKeyboardMarkup:
@@ -158,11 +176,12 @@ async def _create_gag_link_job(
         )
         return
     except Exception as exc:
+        err_text = _format_gag_error(exc)
         logger.exception("gag link mail_id=%s force=%s", mail_id, force_recreate)
-        await save_incoming_gag_link(mail_id, user_id, url="", error=str(exc)[:400])
+        await save_incoming_gag_link(mail_id, user_id, url="", error=err_text[:400])
         await bot.send_message(
             msg.chat.id,
-            f"❌ Ошибка: {str(exc)[:400]}",
+            f"❌ {err_text}",
             reply_to_message_id=msg.message_id,
         )
         return

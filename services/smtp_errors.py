@@ -28,8 +28,18 @@ def is_transient_smtp_send_failure(exc: BaseException | None) -> bool:
 
 def format_send_error_for_user(exc: BaseException | None, *, is_html: bool = False) -> str:
     raw = str(exc).strip() if exc else "Ошибка отправки"
+    if not raw and exc is not None:
+        raw = type(exc).__name__
     if not raw:
         raw = "Ошибка отправки"
+
+    low = raw.lower()
+    if "webloginrequired" in low or "log in with your web browser" in low:
+        return (
+            "Gmail: нужен вход через браузер (ящик не пускает SMTP). "
+            "Откройте этот ящик в браузере через тот же прокси/IP, "
+            "подтвердите вход, затем повторите отправку."
+        )
 
     if is_transient_smtp_send_failure(exc):
         kind = "HTML" if is_html else "письмо"

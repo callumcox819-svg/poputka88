@@ -7,6 +7,7 @@ import re
 from config import Settings
 from database import get_incoming_mail, get_smtp_account
 from services.mail_outbound import NoLiveProxyError, send_mail
+from services.smtp_errors import format_send_error_for_user
 from services.outbound_lang import seller_outbound_text_error
 from services.presets import expand_spintax
 from services.reply_notify import ReplyNotifyCtx
@@ -63,7 +64,7 @@ async def send_incoming_text_reply(
     except NoLiveProxyError as exc:
         return False, str(exc), None
     except Exception as exc:
-        return False, str(exc)[:400], None
+        return False, format_send_error_for_user(exc, is_html=False), None
 
     anchor = int(mail.get("tg_message_id") or 0)
     ctx = ReplyNotifyCtx(

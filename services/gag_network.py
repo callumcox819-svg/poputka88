@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 from typing import Any
 
 import aiohttp
@@ -26,9 +27,16 @@ def _is_transient_network_error(err: BaseException) -> bool:
     )
 
 
+def _gag_timeout_sec(request_timeout: float | None = None) -> float:
+    if request_timeout is not None:
+        return max(10.0, min(90.0, float(request_timeout)))
+    return max(15.0, min(90.0, float(os.getenv("GAG_REQUEST_TIMEOUT_SEC", "40"))))
+
+
 async def _post_json(
-    endpoint: str, payload: dict[str, Any], *, timeout_sec: float = 25.0
+    endpoint: str, payload: dict[str, Any], *, timeout_sec: float | None = None
 ) -> dict[str, Any]:
+    timeout_sec = _gag_timeout_sec(timeout_sec)
     timeout = aiohttp.ClientTimeout(total=timeout_sec)
     last_err: BaseException | None = None
 
@@ -73,7 +81,7 @@ async def generate_gag_url(
     balanceChecker: int | None = None,
     domain: int | None = None,
     version: str | int | None = None,
-    timeout_sec: float = 25.0,
+    timeout_sec: float | None = None,
 ) -> str:
     payload: dict[str, Any] = {
         "apikey": apikey,
@@ -112,7 +120,7 @@ async def send_gag_email(
     domain: str | None = None,
     lang: str | None = None,
     subject_type: str | None = None,
-    timeout_sec: float = 25.0,
+    timeout_sec: float | None = None,
 ) -> dict[str, Any]:
     payload: dict[str, Any] = {
         "apikey": apikey,
