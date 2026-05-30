@@ -3,11 +3,16 @@
 from __future__ import annotations
 
 import re
+from typing import TYPE_CHECKING
 
 from config import Settings
 from database import get_incoming_mail, get_smtp_account
 from services.mail_outbound import NoLiveProxyError, send_mail
 from services.smtp_errors import format_send_error_for_user
+from services.smtp_block_control import handle_campaign_send_error
+
+if TYPE_CHECKING:
+    from aiogram import Bot
 from services.outbound_lang import seller_outbound_text_error
 from services.presets import expand_spintax
 from services.reply_notify import ReplyNotifyCtx
@@ -28,6 +33,8 @@ async def send_incoming_text_reply(
     *,
     mail_id: int,
     body: str,
+    bot: Bot | None = None,
+    chat_id: int | None = None,
 ) -> tuple[bool, str, ReplyNotifyCtx | None]:
     mail = await get_incoming_mail(mail_id, user_id)
     if not mail:
@@ -64,6 +71,13 @@ async def send_incoming_text_reply(
     except NoLiveProxyError as exc:
         return False, str(exc), None
     except Exception as exc:
+        await handle_campaign_send_error(
+            user_id,
+            acc_id,
+            str(exc),
+            bot=bot,
+            chat_id=chat_id,
+        )
         return False, format_send_error_for_user(exc, is_html=False), None
 
     anchor = int(mail.get("tg_message_id") or 0)

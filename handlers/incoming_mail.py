@@ -537,7 +537,12 @@ async def cb_mail_tmpl_send(
 
     async def _job() -> None:
         ok, err, ctx = await send_incoming_text_reply(
-            settings, uid, mail_id=mail_id, body=body
+            settings,
+            uid,
+            mail_id=mail_id,
+            body=body,
+            bot=bot,
+            chat_id=msg.chat.id,
         )
         if ok and ctx:
             ctx.anchor_message_id = anchor
@@ -600,7 +605,12 @@ async def mail_reply_manual_text(
 
     async def _job() -> None:
         ok, err, ctx = await send_incoming_text_reply(
-            settings, uid, mail_id=mail_id, body=text
+            settings,
+            uid,
+            mail_id=mail_id,
+            body=text,
+            bot=message.bot,
+            chat_id=message.chat.id,
         )
         if ok and ctx:
             ctx.anchor_message_id = anchor

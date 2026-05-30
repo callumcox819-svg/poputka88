@@ -54,6 +54,14 @@ _INVALID_CREDENTIALS = (
     "account_invalid_credentials",
 )
 
+# Gmail 534 WebLoginRequired: str(exc) = "(534, b'5.7.9 Please log in with your web browser..."
+_GMAIL_WEB_LOGIN = (
+    "webloginrequired",
+    "log in with your web browser",
+    "(534,",
+    "5.7.9 please log in",
+)
+
 _SMTP_BLOCK = (
     "daily user sending limit",
     "sending limit exceeded",
@@ -77,6 +85,14 @@ _SMTP_BLOCK = (
 
 def _norm(err: str | None) -> str:
     return re.sub(r"\s+", " ", (err or "").strip().lower())
+
+
+def is_gmail_web_login_required(err: str | None) -> bool:
+    """534 WebLoginRequired через прокси — ящик жив, SMTP нужен вход в браузере."""
+    if is_recipient_error(err):
+        return False
+    s = _norm(err)
+    return any(p in s for p in _GMAIL_WEB_LOGIN)
 
 
 def is_recipient_error(err: str | None) -> bool:
@@ -118,6 +134,8 @@ def is_smtp_account_block_error(err: str | None) -> bool:
         return False
     if is_invalid_credentials_error(err):
         return True
+    if is_gmail_web_login_required(err):
+        return True
     s = _norm(err)
     return any(p in s for p in _SMTP_BLOCK)
 
@@ -146,6 +164,23 @@ async def handle_campaign_send_error(
         return None
 
     email = acc.get("email") or ""
+
+    # Браузерная проверка Gmail — с рассылки, IMAP оставляем (не полное удаление).
+    if is_gmail_web_login_required(err):
+        changed = await mark_account_smtp_blocked(user_id, account_id, err)
+        if changed:
+            logger.warning("smtp blocked (web login): %s", email)
+            if bot and chat_id:
+                em = html.escape(email)
+                await bot.send_message(
+                    int(chat_id),
+                    f"⚡️ SMTP для <code>{em}</code> остановлен — Gmail просит вход в браузере "
+                    f"(через тот же прокси). IMAP остаётся.\n"
+                    f"<code>{html.escape(short_block_reason(err))}</code>",
+                    parse_mode="HTML",
+                )
+            return "removed_mailing"
+        return None
 
     if is_invalid_credentials_error(err):
         await disable_account_fully(user_id, account_id, err)
