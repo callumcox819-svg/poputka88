@@ -246,6 +246,63 @@ def is_own_outgoing_copy(from_email: str, account_email: str, subject: str) -> b
     return not sl.startswith(("re:", "fwd:", "aw:", "wg:", "sv:", "antw:", "ré:"))
 
 
+_META_SPAM_FROM_SUFFIXES = (
+    "mail.instagram.com",
+    "instagram.com",
+    "facebookmail.com",
+    "facebook.com",
+    "fb.com",
+    "meta.com",
+)
+
+_META_SPAM_SUBJECT_RE = re.compile(
+    r"(is your instagram code|instagram code|facebook.*security|"
+    r"confirm your email.*facebook|meta.*verification)",
+    re.I,
+)
+
+
+def is_meta_platform_spam_mail(
+    from_email: str,
+    from_name: str,
+    subject: str,
+    body: str = "",
+) -> bool:
+    """
+    Авто-письма Meta (Instagram/Facebook): коды, signup, security — не в Telegram.
+    """
+    f = (from_email or "").strip().lower()
+    name = (from_name or "").strip().lower()
+    subj = (subject or "").strip()
+    bl = (body or "").lower()[:3000]
+
+    if f and "@" in f:
+        domain = f.rpartition("@")[2]
+        if domain in _META_SPAM_FROM_SUFFIXES or any(
+            domain.endswith("." + s) for s in _META_SPAM_FROM_SUFFIXES
+        ):
+            return True
+
+    if "instagram" in name and ("instagram.com" in f or "mail.instagram" in f):
+        return True
+    if "facebook" in name and ("facebook.com" in f or "facebookmail" in f):
+        return True
+
+    if _META_SPAM_SUBJECT_RE.search(subj):
+        return True
+    if re.search(r"\b\d{4,8}\s+is your instagram code\b", subj, re.I):
+        return True
+
+    if "sign up for an instagram account" in bl:
+        return True
+    if "facebook hi," in bl and "instagram account" in bl:
+        return True
+    if "no-reply@mail.instagram.com" in bl and "instagram code" in subj.lower():
+        return True
+
+    return False
+
+
 def is_google_system_mail(from_email: str, from_name: str, subject: str) -> bool:
     f = (from_email or "").strip().lower()
     name = (from_name or "").strip().lower()
