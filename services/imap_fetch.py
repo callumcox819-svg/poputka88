@@ -331,6 +331,65 @@ def is_google_system_mail(from_email: str, from_name: str, subject: str) -> bool
     return False
 
 
+_REPLY_SUBJECT_RE = re.compile(
+    r"^(re|fwd|aw|wg|sv|antw|ré)\s*:",
+    re.I,
+)
+
+# local@ — авто-рассылки (Amazon, OLX marketing, …)
+_NOREPLY_LOCAL_RE = re.compile(
+    r"^(no[-_.]?reply|do[-_.]?not[-_.]?reply|donotreply|mailer-daemon|"
+    r"notification(s)?|campaigns|auto-confirm|bounce|postmaster|"
+    r"mail-noreply|updates?|newsletter|promo|marketing|info\+)",
+    re.I,
+)
+
+
+def _is_reply_subject(subject: str) -> bool:
+    return bool(_REPLY_SUBJECT_RE.match((subject or "").strip()))
+
+
+def is_automated_noreply_mail(
+    from_email: str,
+    from_name: str,
+    subject: str,
+    body: str = "",
+) -> bool:
+    """
+    Системные no-reply / do-not-reply (Amazon, OLX digest, …) — не в Telegram.
+
+    Не режем: Re: от личной почты; запросы Kleinanzeigen с noreply@mail.kleinanzeigen.de.
+    """
+    f = (from_email or "").strip().lower()
+    subj = (subject or "").strip()
+    subj_l = subj.lower()
+    if not f or "@" not in f:
+        return False
+
+    local, _, domain = f.rpartition("@")
+
+    if "kleinanzeigen" in domain:
+        if "nutzer-anfrage" in subj_l or _is_reply_subject(subj):
+            return False
+
+    if _is_reply_subject(subj) and not _NOREPLY_LOCAL_RE.match(local):
+        return False
+
+    if _NOREPLY_LOCAL_RE.match(local):
+        return True
+
+    if local == "campaigns" and ("marketing." in domain or ".marketing." in domain):
+        return True
+
+    if "amazon." in domain and re.search(r"no[-_.]?reply|donotreply", local, re.I):
+        return True
+
+    if "fiverr.com" in domain and _NOREPLY_LOCAL_RE.match(local):
+        return True
+
+    return False
+
+
 def service_label_from_link(link: str) -> str:
     l = (link or "").lower()
     if "facebook.com" in l or "fb.com" in l:

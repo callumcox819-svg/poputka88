@@ -28,6 +28,7 @@ from services.dsn_parse import is_delivery_failure_notification, parse_delivery_
 from services.html_send_tracker import was_recent_html_send
 from services.imap_fetch import (
     fetch_new_mails_sync,
+    is_automated_noreply_mail,
     is_google_system_mail,
     is_meta_platform_spam_mail,
     is_own_outgoing_copy,
@@ -300,6 +301,7 @@ async def _process_account(
     skipped_exists = 0
     skipped_system = 0
     skipped_meta_spam = 0
+    skipped_noreply = 0
     skipped_empty = 0
     skipped_own = 0
 
@@ -327,6 +329,9 @@ async def _process_account(
             continue
         if is_meta_platform_spam_mail(from_email, from_name, subject, body):
             skipped_meta_spam += 1
+            continue
+        if is_automated_noreply_mail(from_email, from_name, subject, body):
+            skipped_noreply += 1
             continue
 
         is_first = (await count_incoming_from_sender(acc_id, from_email)) == 0
@@ -410,13 +415,14 @@ async def _process_account(
     if mails and not notified:
         logger.info(
             "IMAP acc=%s INBOX fetched=%s notified=0 "
-            "(exists=%s own=%s system=%s meta_spam=%s empty=%s)",
+            "(exists=%s own=%s system=%s meta_spam=%s noreply=%s empty=%s)",
             email_addr,
             len(mails),
             skipped_exists,
             skipped_own,
             skipped_system,
             skipped_meta_spam,
+            skipped_noreply,
             skipped_empty,
         )
 
