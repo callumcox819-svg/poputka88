@@ -40,26 +40,72 @@ class ValidemailKeyPool:
         ]
         self._rr = 0
         self._pick_lock = asyncio.Lock()
+        self._disabled: set[int] = set()
+        self._disable_lock = asyncio.Lock()
 
     @property
     def key_count(self) -> int:
         return len(self._keys)
 
+    @property
+    def active_key_count(self) -> int:
+        return max(0, self.key_count - len(self._disabled))
+
+    async def disable_key(self, idx: int, *, reason: str = "") -> None:
+        async with self._disable_lock:
+            if 0 <= idx < len(self._keys):
+                self._disabled.add(idx)
+        if reason:
+            logger.warning("ValidEmail key disabled idx=%s reason=%s", idx, reason[:80])
+
     async def _pick_index(self) -> int:
         async with self._pick_lock:
-            idx = self._rr % len(self._keys)
-            self._rr += 1
-            return idx
+            if not self._keys:
+                return 0
+            # pick next non-disabled key (round-robin)
+            for _ in range(len(self._keys)):
+                idx = self._rr % len(self._keys)
+                self._rr += 1
+                if idx not in self._disabled:
+                    return idx
+            # all disabled
+            return -1
 
     async def validate(self, email: str) -> tuple[bool, str, dict[str, Any]]:
         idx = await self._pick_index()
+        if idx < 0:
+            return False, "payment_required", {}
         async with self._sems[idx]:
-            return await validate_email_api(
+            ok, reason, data = await validate_email_api(
                 email,
                 api_key=self._keys[idx],
                 url=self._url,
                 timeout_sec=self._timeout,
             )
+            if reason == "payment_required":
+                await self.disable_key(idx, reason=reason)
+            return ok, reason, data
+
+    async def validate_resilient(self, email: str) -> tuple[bool, str, dict[str, Any]]:
+        """
+        Как validate(), но при payment_required переключается на следующий ключ.
+        Возвращает payment_required только когда активных ключей не осталось.
+        """
+        if self.key_count <= 0:
+            return False, "no_api_key", {}
+
+        # Worst-case: попробуем максимум N ключей за один вызов
+        for _ in range(self.key_count):
+            ok, reason, data = await self.validate(email)
+            if reason == "payment_required":
+                if self.active_key_count <= 0:
+                    return False, "payment_required", data
+                continue
+            return ok, reason, data
+
+        if self.active_key_count <= 0:
+            return False, "payment_required", {}
+        return False, "unknown", {}
 
 
 async def find_deliverable_email(
@@ -84,7 +130,7 @@ async def find_deliverable_email(
         email = f"{local}@{dom}".lower()
 
         for attempt in range(RATE_LIMIT_RETRIES):
-            ok, reason, _ = await pool.validate(email)
+            ok, reason, _ = await pool.validate_resilient(email)
             if ok:
                 return email, dom, None
             if reason == "payment_required":

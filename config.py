@@ -23,6 +23,8 @@ VALIDEMAIL_API_KEY_4 = "c4e3f3aff1ddde439fbd1bd42c7f3e59"  # 4-й ключ valid
 
 VALIDEMAIL_API_KEY_5 = "c1a4dde2a2ef3bd994158c35a54fdfcf"  # 5-й ключ validemail.co
 
+VALIDEMAIL_API_KEY_6 = ""  # 6-й ключ validemail.co (опционально)
+
 # Перевод через DeepSeek (Railway Variables)
 DEEPSEEK_API_KEY = ""  # ключ с https://platform.deepseek.com/api_keys (лучше держать только в Variables)
 DEEPSEEK_API_BASE = ""  # обычно пусто (по умолчанию https://api.deepseek.com)
@@ -52,6 +54,7 @@ try:
         "VALIDEMAIL_API_KEY_3",
         "VALIDEMAIL_API_KEY_4",
         "VALIDEMAIL_API_KEY_5",
+        "VALIDEMAIL_API_KEY_6",
         "DEEPSEEK_API_KEY",
         "DEEPSEEK_API_BASE",
         "DEEPSEEK_TRANSLATE_MODEL",
@@ -89,6 +92,7 @@ def _validemail_api_keys() -> tuple[str, ...]:
         (VALIDEMAIL_API_KEY_3, "VALIDEMAIL_API_KEY_3"),
         (VALIDEMAIL_API_KEY_4, "VALIDEMAIL_API_KEY_4"),
         (VALIDEMAIL_API_KEY_5, "VALIDEMAIL_API_KEY_5"),
+        (VALIDEMAIL_API_KEY_6, "VALIDEMAIL_API_KEY_6"),
     ):
         k = _pick(hard, env)
         if k and k not in seen:
