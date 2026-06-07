@@ -104,6 +104,7 @@ async def send_one(
     from_display_name: str | None = None,
     use_tls: bool | None = None,
     proxy: dict[str, Any] | None = None,
+    smtp_timeout: int | None = None,
 ) -> EncodingName:
     enc = resolve_encoding(transfer, body, is_html=is_html)
 
@@ -147,6 +148,7 @@ async def send_one(
             mail_from=mail_from,
             to_addr=to_addr,
             message=message,
+            timeout=smtp_timeout,
         )
         return enc
 

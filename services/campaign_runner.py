@@ -9,6 +9,7 @@ from config import Settings
 from database import (
     count_proxies,
     get_campaign,
+    list_sendable_proxies,
     list_smtp_mailing_accounts,
     mark_failed,
     mark_sent,
@@ -16,12 +17,16 @@ from database import (
     set_campaign_status,
 )
 from services.offer_text import apply_offer_to_text
-from services.subject_offer import mailing_subject_for_recipient, offer_title_for_recipient
+from services.presets import load_smart_texts
+from services.spintax import expand_spintax
+from services.subject_offer import (
+    MAILING_SUBJECT_OFFER,
+    batch_recipient_mailing_meta,
+)
 from services.encoding import TransferEncoding
 from services.mailing_timing import load_timing
 from services.html_spoof import HtmlOutboundError
 from services.mail_outbound import NoLiveProxyError, live_proxy_count, send_mail
-from services.presets import pick_random_smart_preset
 from services.smtp_block_control import handle_campaign_send_error
 from services.task_control import (
     clear_stop_campaign,
@@ -171,15 +176,25 @@ async def run_campaign(
 
             base_body = camp["body"]
             burst_stopped = False
+            proxy_rows = (
+                await list_sendable_proxies(user_id) if proxy_total else None
+            )
+            title_by_email, subject_by_email = await batch_recipient_mailing_meta(
+                user_id, batch
+            )
+            smart_texts: list[str] = []
+            if smart_on and not is_html:
+                smart_texts = await load_smart_texts(user_id)
 
             for email in batch:
                 if should_stop_campaign(campaign_id):
                     burst_stopped = True
                     break
 
+                em_key = (email or "").strip().lower()
                 body = base_body
-                offer_title = await offer_title_for_recipient(user_id, email)
-                subject = await mailing_subject_for_recipient(user_id, email)
+                subject = subject_by_email.get(em_key) or MAILING_SUBJECT_OFFER
+                offer_title = title_by_email.get(em_key) or ""
 
                 if is_html:
                     body, html_err = await render_campaign_html(
@@ -189,13 +204,10 @@ async def run_campaign(
                         await mark_failed(campaign_id, email, html_err)
                         continue
                 else:
-                    if smart_on:
-                        smart_body = await pick_random_smart_preset(
-                            user_id, offer_title
-                        )
-                        if smart_body:
-                            body = smart_body
-                    else:
+                    if smart_on and smart_texts:
+                        base = smart_texts[random.randrange(len(smart_texts))]
+                        body = apply_offer_to_text(expand_spintax(base), offer_title)
+                    elif not smart_on:
                         body = apply_offer_to_text(body, offer_title)
 
                 try:
@@ -208,6 +220,8 @@ async def run_campaign(
                         is_html=is_html,
                         transfer=transfer,
                         account=account,
+                        proxies=proxy_rows,
+                        fast_mailing=True,
                     )
                     await mark_sent(campaign_id, email)
                     logger.info("sent %s enc=%s", email, used)

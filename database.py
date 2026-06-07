@@ -1530,6 +1530,31 @@ async def get_validated_lead_by_email(user_id: int, email: str) -> dict | None:
         return row.as_dict() if row else None
 
 
+async def get_validated_leads_by_emails(
+    user_id: int, emails: list[str]
+) -> dict[str, dict]:
+    """Один запрос: email → лид (для пачки рассылки)."""
+    cleaned = sorted({(e or "").strip().lower() for e in emails if "@" in (e or "")})
+    if not cleaned:
+        return {}
+    placeholders = ",".join("?" * len(cleaned))
+    async with db_connect() as db:
+        cur = await db.execute(
+            f"""
+            SELECT * FROM validated_leads
+            WHERE user_id = ? AND email IN ({placeholders})
+            """,
+            (user_id, *cleaned),
+        )
+        out: dict[str, dict] = {}
+        for row in await cur.fetchall():
+            lead = row.as_dict()
+            em = (lead.get("email") or "").strip().lower()
+            if em:
+                out[em] = lead
+        return out
+
+
 async def get_validated_lead_by_id(user_id: int, lead_id: int) -> dict | None:
     async with db_connect() as db:
         cur = await db.execute(

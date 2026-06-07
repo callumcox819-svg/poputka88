@@ -105,8 +105,12 @@ async def send_via_proxy(
     mail_from: str,
     to_addr: str,
     message: EmailMessage,
+    timeout: int | None = None,
 ) -> None:
-    timeout = max(25, min(90, int(os.getenv("MAIL_SMTP_TIMEOUT_SEC", "45"))))
+    if timeout is None:
+        timeout = max(25, min(90, int(os.getenv("MAIL_SMTP_TIMEOUT_SEC", "45"))))
+    timeout = max(12, min(90, int(timeout)))
+    wait_slack = max(8, min(20, int(os.getenv("MAIL_SMTP_WAIT_SLACK_SEC", "12"))))
 
     async def _run() -> None:
         async with proxy_smtp_context(proxy):
@@ -122,4 +126,4 @@ async def send_via_proxy(
                 timeout=timeout,
             )
 
-    await asyncio.wait_for(_run(), timeout=timeout + 30)
+    await asyncio.wait_for(_run(), timeout=timeout + wait_slack)

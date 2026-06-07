@@ -48,14 +48,19 @@ def proxy_to_dict(row: dict) -> dict:
     }
 
 
-async def pick_next_proxy(user_id: int) -> dict | None:
-    rows = await list_sendable_proxies(user_id)
+def pick_next_proxy_from_rows(user_id: int, rows: list[dict]) -> dict | None:
+    """Round-robin по уже загруженному списку (без запроса в БД)."""
     if not rows:
         return None
     uid = int(user_id)
     idx = _rr_index.get(uid, 0) % len(rows)
     _rr_index[uid] = idx + 1
     return proxy_to_dict(rows[idx])
+
+
+async def pick_next_proxy(user_id: int) -> dict | None:
+    rows = await list_sendable_proxies(user_id)
+    return pick_next_proxy_from_rows(user_id, rows)
 
 
 def is_socks_proxy_failure(exc: BaseException) -> bool:
