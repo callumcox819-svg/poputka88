@@ -58,6 +58,21 @@ def pick_next_proxy_from_rows(user_id: int, rows: list[dict]) -> dict | None:
     return proxy_to_dict(rows[idx])
 
 
+def proxy_for_batch_slot(user_id: int, rows: list[dict], slot: int) -> dict | None:
+    """Прокси для параллельной пачки: slot 0..N-1 без гонки round-robin."""
+    if not rows:
+        return None
+    uid = int(user_id)
+    base = _rr_index.get(uid, 0)
+    idx = (base + int(slot)) % len(rows)
+    return proxy_to_dict(rows[idx])
+
+
+def advance_proxy_round_robin(user_id: int, n: int) -> None:
+    if n > 0:
+        _rr_index[int(user_id)] = _rr_index.get(int(user_id), 0) + int(n)
+
+
 async def pick_next_proxy(user_id: int) -> dict | None:
     rows = await list_sendable_proxies(user_id)
     return pick_next_proxy_from_rows(user_id, rows)

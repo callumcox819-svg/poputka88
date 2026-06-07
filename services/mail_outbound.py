@@ -34,11 +34,11 @@ class NoLiveProxyError(RuntimeError):
 
 
 def _mailing_smtp_timeout() -> int:
-    raw = (os.getenv("MAILING_SMTP_TIMEOUT_SEC") or "22").strip()
+    raw = (os.getenv("MAILING_SMTP_TIMEOUT_SEC") or "15").strip()
     try:
-        return max(12, min(45, int(raw)))
+        return max(10, min(35, int(raw)))
     except ValueError:
-        return 22
+        return 15
 
 
 def _mailing_max_proxy_tries(proxy_count: int) -> int:
@@ -73,6 +73,7 @@ async def send_mail(
     account: dict[str, Any] | None = None,
     use_tls: bool | None = None,
     proxies: list[dict] | None = None,
+    fixed_proxy: dict[str, Any] | None = None,
     fast_mailing: bool = False,
     smtp_timeout: int | None = None,
 ) -> EncodingName:
@@ -89,13 +90,15 @@ async def send_mail(
     if is_html and in_reply_to:
         subject = spoof_subject_for_thread_reply(subject)
 
-    if not await user_has_proxies(uid):
-        raise NoLiveProxyError(
-            "Добавьте SOCKS5-прокси в 🌐 Прокси. "
-            "Рассылка, ответы (пресеты/ручные) и HTML — только через прокси."
-        )
-
-    sendable = proxies if proxies is not None else await list_sendable_proxies(uid)
+    if proxies is None:
+        if not await user_has_proxies(uid):
+            raise NoLiveProxyError(
+                "Добавьте SOCKS5-прокси в 🌐 Прокси. "
+                "Рассылка, ответы (пресеты/ручные) и HTML — только через прокси."
+            )
+        sendable = await list_sendable_proxies(uid)
+    else:
+        sendable = proxies
     if not sendable:
         raise NoLiveProxyError(
             "В настройках есть прокси, но нет живых. "
@@ -109,7 +112,10 @@ async def send_mail(
     last_exc: Exception | None = None
     proxy_rows = list(sendable)
     attempts = len(proxy_rows)
-    if fast_mailing:
+    if fixed_proxy:
+        max_rounds = 2 if fast_mailing and attempts > 0 else 1
+        per_round = 1
+    elif fast_mailing:
         per_round = _mailing_max_proxy_tries(attempts)
         max_rounds = 2 if attempts > 0 else 0
     else:
@@ -123,9 +129,13 @@ async def send_mail(
             break
         limit = per_round if _round == 0 else (1 if fast_mailing else attempts)
         for _ in range(limit):
-            if not proxy_rows:
+            if not proxy_rows and not fixed_proxy:
                 break
-            if proxies is not None:
+            if fixed_proxy and _round == 0:
+                proxy = fixed_proxy
+            elif fixed_proxy and _round == 1:
+                proxy = pick_next_proxy_from_rows(uid, proxy_rows) if proxy_rows else None
+            elif proxies is not None:
                 proxy = pick_next_proxy_from_rows(uid, proxy_rows)
             else:
                 proxy = await pick_next_proxy(uid)
@@ -147,6 +157,7 @@ async def send_mail(
                     use_tls=use_tls,
                     proxy=proxy,
                     smtp_timeout=timeout,
+                    proxy_isolated=fast_mailing,
                 )
                 if is_html:
                     from_addr = (account or {}).get("email") or settings.smtp_user or ""

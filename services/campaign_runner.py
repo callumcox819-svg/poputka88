@@ -27,6 +27,7 @@ from services.encoding import TransferEncoding
 from services.mailing_timing import load_timing
 from services.html_spoof import HtmlOutboundError
 from services.mail_outbound import NoLiveProxyError, live_proxy_count, send_mail
+from services.proxy_pool import advance_proxy_round_robin, proxy_for_batch_slot
 from services.smtp_block_control import handle_campaign_send_error
 from services.task_control import (
     clear_stop_campaign,
@@ -186,10 +187,9 @@ async def run_campaign(
             if smart_on and not is_html:
                 smart_texts = await load_smart_texts(user_id)
 
-            for email in batch:
+            async def _send_recipient(slot: int, email: str) -> str:
                 if should_stop_campaign(campaign_id):
-                    burst_stopped = True
-                    break
+                    return "stop"
 
                 em_key = (email or "").strip().lower()
                 body = base_body
@@ -202,14 +202,20 @@ async def run_campaign(
                     )
                     if html_err:
                         await mark_failed(campaign_id, email, html_err)
-                        continue
-                else:
+                        return "failed"
+
+                if not is_html:
                     if smart_on and smart_texts:
                         base = smart_texts[random.randrange(len(smart_texts))]
                         body = apply_offer_to_text(expand_spintax(base), offer_title)
                     elif not smart_on:
                         body = apply_offer_to_text(body, offer_title)
 
+                fixed_proxy = (
+                    proxy_for_batch_slot(user_id, proxy_rows, slot)
+                    if proxy_rows
+                    else None
+                )
                 try:
                     used = await send_mail(
                         settings,
@@ -221,15 +227,14 @@ async def run_campaign(
                         transfer=transfer,
                         account=account,
                         proxies=proxy_rows,
+                        fixed_proxy=fixed_proxy,
                         fast_mailing=True,
                     )
                     await mark_sent(campaign_id, email)
-                    logger.info("sent %s enc=%s", email, used)
-                except (NoLiveProxyError, HtmlOutboundError) as exc:
-                    await set_campaign_status(campaign_id, "paused")
-                    await bot.send_message(chat_id, f"❌ {exc}")
-                    burst_stopped = True
-                    break
+                    logger.info("sent %s enc=%s slot=%s", email, used, slot)
+                    return "sent"
+                except (NoLiveProxyError, HtmlOutboundError):
+                    raise
                 except Exception as exc:
                     await mark_failed(campaign_id, email, str(exc))
                     logger.warning("fail %s: %s", email, exc)
@@ -242,19 +247,48 @@ async def run_campaign(
                             chat_id=chat_id,
                         )
                         if action in {"removed_mailing", "disabled_full"}:
-                            accounts = await list_smtp_mailing_accounts(
-                                user_id, with_secrets=True
-                            )
-                            if not accounts and not (
-                                settings.smtp_host and settings.smtp_user
-                            ):
-                                await set_campaign_status(campaign_id, "paused")
-                                await bot.send_message(
-                                    chat_id,
-                                    "❌ Все SMTP-аккаунты отключены. Рассылка остановлена.",
-                                )
-                                burst_stopped = True
-                                break
+                            return "smtp_exhausted"
+                    return "failed"
+
+            if is_html:
+                send_results = [
+                    await _send_recipient(i, email) for i, email in enumerate(batch)
+                ]
+            else:
+                send_results = await asyncio.gather(
+                    *[
+                        _send_recipient(i, email)
+                        for i, email in enumerate(batch)
+                    ],
+                    return_exceptions=True,
+                )
+
+            if proxy_rows:
+                advance_proxy_round_robin(user_id, len(batch))
+
+            for result in send_results:
+                if isinstance(result, (NoLiveProxyError, HtmlOutboundError)):
+                    await set_campaign_status(campaign_id, "paused")
+                    await bot.send_message(chat_id, f"❌ {result}")
+                    burst_stopped = True
+                    break
+                if result == "stop":
+                    burst_stopped = True
+                    break
+                if result == "smtp_exhausted":
+                    accounts = await list_smtp_mailing_accounts(
+                        user_id, with_secrets=True
+                    )
+                    if not accounts and not (
+                        settings.smtp_host and settings.smtp_user
+                    ):
+                        await set_campaign_status(campaign_id, "paused")
+                        await bot.send_message(
+                            chat_id,
+                            "❌ Все SMTP-аккаунты отключены. Рассылка остановлена.",
+                        )
+                        burst_stopped = True
+                        break
 
             if burst_stopped:
                 if should_stop_campaign(campaign_id):
