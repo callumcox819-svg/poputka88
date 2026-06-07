@@ -27,7 +27,16 @@ from services.encoding import TransferEncoding
 from services.mailing_timing import load_timing
 from services.html_spoof import HtmlOutboundError
 from services.mail_outbound import NoLiveProxyError, live_proxy_count, send_mail
-from services.proxy_pool import advance_proxy_round_robin, proxy_for_batch_slot
+from services.mailing_proxy_health import (
+    MAIL_PROXY_RECHECK_SEC,
+    preflight_proxies_for_mailing,
+    run_proxy_health_check,
+)
+from services.proxy_pool import (
+    advance_proxy_round_robin,
+    clear_mailing_session,
+    proxy_for_batch_slot,
+)
 from services.smtp_block_control import handle_campaign_send_error
 from services.task_control import (
     clear_stop_campaign,
@@ -91,6 +100,24 @@ async def run_campaign(
         is_html = bool(camp["is_html"])
 
         proxy_total = await count_proxies(user_id)
+        proxy_line = ""
+        if proxy_total:
+            ok_start, _, proxy_detail = await preflight_proxies_for_mailing(user_id)
+            if not ok_start:
+                await set_campaign_status(campaign_id, "paused")
+                await bot.send_message(
+                    chat_id,
+                    f"❌ Проверка прокси перед рассылкой не пройдена.\n{proxy_detail}",
+                    parse_mode="HTML",
+                )
+                return
+            proxy_line = (
+                f"\n🔍 Прокси перед стартом:\n{proxy_detail}\n"
+                f"<i>Перепроверка каждые {MAIL_PROXY_RECHECK_SEC // 60} мин во время рассылки.</i>"
+            )
+        else:
+            proxy_live = 0
+
         proxy_live = await live_proxy_count(user_id) if proxy_total else 0
         if proxy_total and proxy_live == 0:
             await set_campaign_status(campaign_id, "paused")
@@ -100,10 +127,6 @@ async def run_campaign(
                 "Проверьте прокси (🌐 Прокси → 🔍 Проверить) и запустите снова.",
             )
             return
-
-        proxy_line = ""
-        if proxy_total:
-            proxy_line = f"\nПрокси SOCKS5: {proxy_live}/{proxy_total} (все живые по очереди)"
         smart_on = await get_bool(user_id, "smart_mode")
         smart_line = "\n🟢 Умный режим: подставляются умные пресеты." if smart_on else ""
         html_line = ""
@@ -122,7 +145,10 @@ async def run_campaign(
             chat_id,
             f"Рассылка #{campaign_id} запущена.\n"
             f"SMTP-аккаунтов: {len(accounts) or 'из .env (1)'}{proxy_line}{smart_line}{html_line}",
+            parse_mode="HTML",
         )
+
+        last_proxy_recheck = time.monotonic()
 
         while True:
             if should_stop_campaign(campaign_id):
@@ -301,6 +327,27 @@ async def run_campaign(
                     )
                 break
 
+            if proxy_total and time.monotonic() - last_proxy_recheck >= MAIL_PROXY_RECHECK_SEC:
+                try:
+                    summary = await run_proxy_health_check(user_id)
+                    last_proxy_recheck = time.monotonic()
+                    logger.info(
+                        "mailing proxy recheck user_id=%s ok=%s bad=%s total=%s",
+                        user_id,
+                        summary.ok,
+                        summary.bad,
+                        summary.total,
+                    )
+                    if summary.ok == 0 and summary.unknown == 0 and summary.total > 0:
+                        await bot.send_message(
+                            chat_id,
+                            f"⚠️ <b>Перепроверка прокси</b>\n{summary.format_lines()}\n"
+                            "<i>Рассылка продолжается — попытка через оставшиеся 🟢/🟡.</i>",
+                            parse_mode="HTML",
+                        )
+                except Exception:
+                    logger.exception("mailing proxy recheck failed user_id=%s", user_id)
+
             # Пауза на пачку: случайно MIN–MAX сек (как happy88), не фикс MIN на каждое письмо.
             pace = random.uniform(min_delay, max_delay)
             wait_more = pace - (time.monotonic() - iter_started)
@@ -348,3 +395,4 @@ async def run_campaign(
             logger.exception("failed to mark orphan campaign %s paused", campaign_id)
         _active.discard(campaign_id)
         clear_stop_campaign(campaign_id)
+        clear_mailing_session(user_id)

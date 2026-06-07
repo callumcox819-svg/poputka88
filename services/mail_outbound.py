@@ -15,8 +15,10 @@ from config import Settings
 from database import count_proxies, list_sendable_proxies
 from services.encoding import TransferEncoding
 from services.proxy_pool import (
+    build_mailing_proxy_try_order,
     is_socks_proxy_failure,
     mark_proxy_dead,
+    note_mailing_proxy_failure,
     pick_next_proxy,
     pick_next_proxy_from_rows,
 )
@@ -34,15 +36,15 @@ class NoLiveProxyError(RuntimeError):
 
 
 def _mailing_smtp_timeout() -> int:
-    raw = (os.getenv("MAILING_SMTP_TIMEOUT_SEC") or "15").strip()
+    raw = (os.getenv("MAILING_SMTP_TIMEOUT_SEC") or "25").strip()
     try:
-        return max(10, min(35, int(raw)))
+        return max(15, min(45, int(raw)))
     except ValueError:
-        return 15
+        return 25
 
 
 def _mailing_max_proxy_tries(proxy_count: int) -> int:
-    raw = (os.getenv("MAILING_MAX_PROXY_TRIES") or "2").strip()
+    raw = (os.getenv("MAILING_MAX_PROXY_TRIES") or "10").strip()
     try:
         cap = max(1, min(5, int(raw)))
     except ValueError:
@@ -80,8 +82,9 @@ async def send_mail(
     """
     Отправить письмо. Всегда только через SOCKS5-прокси из настроек пользователя.
 
-    fast_mailing: рассылка — меньше таймаут, до 2 прокси на письмо, без 2-го полного круга.
+    fast_mailing: рассылка — перебор всех живых прокси на письмо (сначала слот пачки).
     proxies: уже загруженный список живых прокси (без лишних SELECT на каждое письмо).
+    fixed_proxy: прокси слота параллельной пачки; при сбое — остальные из пула.
     """
     uid = int(user_id)
     subject, body, from_display_name = await prepare_html_outbound(
@@ -112,81 +115,73 @@ async def send_mail(
     last_exc: Exception | None = None
     proxy_rows = list(sendable)
     attempts = len(proxy_rows)
-    if fixed_proxy:
-        max_rounds = 2 if fast_mailing and attempts > 0 else 1
-        per_round = 1
-    elif fast_mailing:
-        per_round = _mailing_max_proxy_tries(attempts)
-        max_rounds = 2 if attempts > 0 else 0
-    else:
-        per_round = attempts
-        max_rounds = 2 if attempts > 0 else 0
 
-    for _round in range(max_rounds):
-        if _round == 1 and (
-            last_exc is None or not is_transient_smtp_send_failure(last_exc)
-        ):
-            break
-        limit = per_round if _round == 0 else (1 if fast_mailing else attempts)
-        for _ in range(limit):
-            if not proxy_rows and not fixed_proxy:
-                break
-            if fixed_proxy and _round == 0:
-                proxy = fixed_proxy
-            elif fixed_proxy and _round == 1:
-                proxy = pick_next_proxy_from_rows(uid, proxy_rows) if proxy_rows else None
-            elif proxies is not None:
-                proxy = pick_next_proxy_from_rows(uid, proxy_rows)
+    if fast_mailing:
+        try_order = build_mailing_proxy_try_order(
+            uid,
+            proxy_rows,
+            fixed_proxy=fixed_proxy,
+            max_tries=_mailing_max_proxy_tries(attempts),
+        )
+    else:
+        try_order = []
+        for _ in range(attempts):
+            if proxies is not None:
+                p = pick_next_proxy_from_rows(uid, proxy_rows)
             else:
-                proxy = await pick_next_proxy(uid)
-            if not proxy:
-                break
-            try:
-                enc = await send_one(
-                    settings,
-                    to_addr=to_addr,
-                    subject=subject,
-                    body=body,
-                    is_html=is_html,
-                    transfer=transfer,
-                    reply_to=reply_to,
-                    in_reply_to=in_reply_to,
-                    references=references,
-                    account=account,
-                    from_display_name=from_display_name,
-                    use_tls=use_tls,
-                    proxy=proxy,
-                    smtp_timeout=timeout,
-                    proxy_isolated=fast_mailing,
-                )
-                if is_html:
-                    from_addr = (account or {}).get("email") or settings.smtp_user or ""
-                    await record_html_send(
-                        uid, from_account=from_addr, to_addr=to_addr
-                    )
-                return enc
-            except Exception as exc:
-                last_exc = exc
-                pid = proxy.get("id")
-                if pid and is_socks_proxy_failure(exc):
-                    await mark_proxy_dead(uid, int(pid), str(exc))
-                    if proxies is not None:
-                        proxy_rows = [
-                            r
-                            for r in proxy_rows
-                            if int(r.get("id") or 0) != int(pid)
-                        ]
-                continue
-        if last_exc is None or not is_transient_smtp_send_failure(last_exc):
-            break
-        if _round == 0 and not fast_mailing:
-            logger.warning(
-                "send_mail transient SMTP user_id=%s to=%s html=%s: %s — retry all proxies",
-                uid,
-                to_addr,
-                is_html,
-                last_exc,
+                p = await pick_next_proxy(uid)
+            if p:
+                try_order.append(p)
+
+    for proxy in try_order:
+        try:
+            enc = await send_one(
+                settings,
+                to_addr=to_addr,
+                subject=subject,
+                body=body,
+                is_html=is_html,
+                transfer=transfer,
+                reply_to=reply_to,
+                in_reply_to=in_reply_to,
+                references=references,
+                account=account,
+                from_display_name=from_display_name,
+                use_tls=use_tls,
+                proxy=proxy,
+                smtp_timeout=timeout,
+                proxy_isolated=fast_mailing,
             )
+            if is_html:
+                from_addr = (account or {}).get("email") or settings.smtp_user or ""
+                await record_html_send(uid, from_account=from_addr, to_addr=to_addr)
+            return enc
+        except Exception as exc:
+            last_exc = exc
+            pid = int(proxy.get("id") or 0)
+            if pid and is_socks_proxy_failure(exc):
+                await mark_proxy_dead(uid, pid, str(exc))
+                if proxies is not None:
+                    proxy_rows = [
+                        r for r in proxy_rows if int(r.get("id") or 0) != pid
+                    ]
+            elif pid and fast_mailing:
+                await note_mailing_proxy_failure(
+                    uid,
+                    pid,
+                    str(exc),
+                    hard_dead=is_socks_proxy_failure(exc),
+                )
+            continue
+
+    if not fast_mailing and attempts > 0 and is_transient_smtp_send_failure(last_exc):
+        logger.warning(
+            "send_mail transient SMTP user_id=%s to=%s html=%s: %s — proxies exhausted",
+            uid,
+            to_addr,
+            is_html,
+            last_exc,
+        )
 
     if last_exc is not None:
         logger.warning(
